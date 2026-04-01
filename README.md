@@ -1,10 +1,9 @@
 <p align="center">
-  <img src="assets/logo-no-background.png" alt="Nexa" width="120" />
+  <img src="assets/logo.png" alt="Nexa" width="120" />
 </p>
 
 # Nexa
 
-[![CI](https://github.com/nassime/Nexa-lang/actions/workflows/ci.yml/badge.svg)](https://github.com/nassime/Nexa-lang/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 
