@@ -1,0 +1,28 @@
+Dead code removal
+Inline components
+Flatten tree
+Precompute props
+
+package manager
+package registry
+commandes complète du package manager (login/creation de compte)
+config local package registry
+deps/ embarquées compilation
+
+premiere deps officiel:
+
+std (librairie standard)
+ui-kit (composants UI natifs)
+sql (librairie pour interagir avec les bases de données) - simple
+postgres (driver pour interagir avec les bases de données) - simple
+supabase (librairie pour interagir avec les bases de données) - simple
+mongo (driver pour interagir avec les bases de données) - simple
+nexus-orm (librairie pour interagir avec les bases de données) - simple
+
+lazy loading
+signature asymétrique (Ed25519)
+encryption
+
+frontend du package-registry officiel (fait en nexa)
+
+couche securiter/infra/docker/devops/k8s

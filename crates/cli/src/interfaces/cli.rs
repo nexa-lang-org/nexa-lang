@@ -11,8 +11,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile le projet et démarre le dev server
+    /// Compile le projet et démarre le dev server (accepte aussi un bundle .nexa)
     Run {
+        /// Fichier .nexa à exécuter directement (optionnel)
+        #[arg(value_name = "BUNDLE")]
+        bundle: Option<PathBuf>,
         /// Répertoire racine du projet (défaut : répertoire courant)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
@@ -29,12 +32,24 @@ enum Commands {
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
     },
+    /// Empaquète le projet dans un bundle distribuable .nexa
+    Package {
+        /// Répertoire racine du projet (défaut : répertoire courant)
+        #[arg(short, long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Chemin de sortie du fichier .nexa (défaut : <name>.nexa)
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
 }
 
 pub async fn run() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Run { project, port, watch } => commands::run(project, port, watch).await,
-        Commands::Build { project }            => commands::build(project),
+        Commands::Run { bundle, project, port, watch } => {
+            commands::run(bundle, project, port, watch).await
+        }
+        Commands::Build { project }             => commands::build(project),
+        Commands::Package { project, output }   => commands::package(project, output),
     }
 }

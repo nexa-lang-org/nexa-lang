@@ -3,6 +3,7 @@ pub mod domain;
 pub mod infrastructure;
 
 pub use application::services::codegen::CodeGenerator;
+pub use application::services::packager::{decode_nxb, PackageError};
 pub use application::services::parser::Parser;
 pub use application::services::resolver::Resolver;
 pub use application::services::semantic::SemanticAnalyzer;
@@ -72,6 +73,105 @@ impl fmt::Display for CompileError {
 }
 
 impl std::error::Error for CompileError {}
+
+/// The output of `compile_to_bundle`: a distributable `.nexa` bundle payload.
+pub struct BundleResult {
+    /// `b"NXB\x01"` magic + bincode-serialized optimized AST.
+    pub nxb: Vec<u8>,
+    /// Auto-generated `manifest.json` contents.
+    pub manifest: String,
+    /// Hex-encoded SHA-256 of `nxb || manifest` bytes.
+    pub signature: String,
+}
+
+/// Compile a project to a `.nexa` bundle (NXB AST + manifest + signature).
+/// Pipeline: Lexer → Parser → Resolver → SemanticAnalyzer → Optimizer → NXB encode.
+#[allow(clippy::result_large_err)]
+pub fn compile_to_bundle(
+    entry: &Path,
+    src_root: &Path,
+    app_name: &str,
+    app_version: &str,
+) -> Result<BundleResult, CompileError> {
+    use application::services::{optimizer, packager};
+    use sha2::{Digest, Sha256};
+
+    let file = entry.display().to_string();
+    let source = std::fs::read_to_string(entry).map_err(|e| CompileError {
+        span: Span::dummy(),
+        kind: CompileErrorKind::Resolve(
+            application::services::resolver::ResolveError::Io(file.clone(), e),
+        ),
+        file: Some(file.clone()),
+        source: None,
+    })?;
+    let src = source.clone();
+
+    let tokens = application::services::lexer::Lexer::new(&source)
+        .tokenize()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Lex(e),
+            file: Some(file.clone()),
+            source: Some(src.clone()),
+        })?;
+
+    let program = application::services::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Parse(e),
+            file: Some(file.clone()),
+            source: Some(src.clone()),
+        })?;
+
+    let resolved = application::services::resolver::Resolver::new(
+        src_root,
+        infrastructure::fs_source::FsSourceProvider,
+    )
+    .resolve(&program, entry)
+    .map_err(|e| CompileError {
+        span: Span::dummy(),
+        kind: CompileErrorKind::Resolve(e),
+        file: Some(file.clone()),
+        source: None,
+    })?;
+
+    let mut analyzer = application::services::semantic::SemanticAnalyzer::new();
+    analyzer.analyze(&resolved).map_err(|e| CompileError {
+        span: e.span(),
+        kind: CompileErrorKind::Semantic(e),
+        file: Some(file.clone()),
+        source: Some(src.clone()),
+    })?;
+
+    let optimized = optimizer::optimize(resolved);
+
+    let nxb = packager::encode_nxb(&optimized).map_err(|e| CompileError {
+        span: Span::dummy(),
+        kind: CompileErrorKind::Codegen(
+            application::services::codegen::CodegenError::Generic(e.to_string()),
+        ),
+        file: Some(file.clone()),
+        source: None,
+    })?;
+
+    let nexa_ver = env!("CARGO_PKG_VERSION");
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let manifest = format!(
+        r#"{{"name":"{app_name}","version":"{app_version}","nexa_version":"{nexa_ver}","nxb_version":1,"created_at":{created_at}}}"#
+    );
+
+    let mut hasher = Sha256::new();
+    hasher.update(&nxb);
+    hasher.update(manifest.as_bytes());
+    let signature = format!("{:x}", hasher.finalize());
+
+    Ok(BundleResult { nxb, manifest, signature })
+}
 
 /// Pipeline commun : lex → parse → resolve → semantic → codegen.
 /// `entry` est utilisé pour résoudre les imports relatifs au fichier source.

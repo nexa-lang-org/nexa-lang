@@ -1,18 +1,20 @@
-#[derive(Debug, Clone, PartialEq, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum Visibility {
     Public,
     #[default]
     Private,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClassKind {
     Class,
     Component,
     Window,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
     Int,
     String,
@@ -26,7 +28,7 @@ pub enum Type {
 
 // ── Binary / Unary operators ────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BinOp {
     Add, Sub, Mul, Div, Mod,
     Eq, Ne, Lt, Gt, Le, Ge,
@@ -58,7 +60,7 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UnOp {
     Not,
     Neg,
@@ -66,7 +68,7 @@ pub enum UnOp {
 
 // ── Top-level program ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Program {
     pub name: String,
     pub package: Option<String>,
@@ -76,18 +78,18 @@ pub struct Program {
     pub routes: Vec<Route>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportDecl {
     /// Fully-qualified path, e.g. "com.myapp.models.User"
     pub path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Declaration {
     Class(ClassDecl),
     Interface(InterfaceDecl),
@@ -95,7 +97,7 @@ pub enum Declaration {
 
 // ── Class / Component / Window ──────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassDecl {
     pub visibility: Visibility,
     pub kind: ClassKind,
@@ -108,14 +110,14 @@ pub struct ClassDecl {
     pub methods: Vec<Method>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Field {
     pub visibility: Visibility,
     pub ty: Type,
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Method {
     pub visibility: Visibility,
     pub name: String,
@@ -124,19 +126,19 @@ pub struct Method {
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Constructor {
     pub params: Vec<Param>,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Param {
     pub name: String,
     pub ty: Type,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterfaceDecl {
     pub visibility: Visibility,
     pub name: String,
@@ -144,14 +146,14 @@ pub struct InterfaceDecl {
     pub methods: Vec<MethodSig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MethodSig {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Type,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
     pub path: String,
     pub target: String,
@@ -159,7 +161,7 @@ pub struct Route {
 
 // ── Statements ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
     Return(Option<Expr>),
     /// this.field = value  OR  ident = value
@@ -177,7 +179,7 @@ pub enum Stmt {
 
 // ── Expressions ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     StringLit(String),
     IntLit(i64),
