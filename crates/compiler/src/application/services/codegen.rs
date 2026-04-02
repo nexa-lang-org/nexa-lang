@@ -11,10 +11,12 @@ pub enum CodegenError {
 pub struct CodeGenerator;
 
 impl CodeGenerator {
-    pub fn new() -> Self { CodeGenerator }
+    pub fn new() -> Self {
+        CodeGenerator
+    }
 
     pub fn generate(&mut self, program: &Program) -> Result<CompileResult, CodegenError> {
-        let js   = self.gen_js(program)?;
+        let js = self.gen_js(program)?;
         let html = self.gen_html(program)?;
         Ok(CompileResult { html, js })
     }
@@ -77,10 +79,12 @@ impl CodeGenerator {
 
         match stmt {
             Stmt::Return(None) => Ok(format!("{pad}return;\n")),
-            Stmt::Return(Some(expr)) => {
-                Ok(format!("{pad}return {};\n", self.gen_expr(expr)?))
-            }
-            Stmt::Assign { object, field, value } => {
+            Stmt::Return(Some(expr)) => Ok(format!("{pad}return {};\n", self.gen_expr(expr)?)),
+            Stmt::Assign {
+                object,
+                field,
+                value,
+            } => {
                 // this.field = x  or  local = x  (stored as field == name when object == Ident)
                 let lhs = match object {
                     Expr::This => format!("this.{field}"),
@@ -92,7 +96,11 @@ impl CodeGenerator {
             Stmt::Let { name, init, .. } => {
                 Ok(format!("{pad}let {name} = {};\n", self.gen_expr(init)?))
             }
-            Stmt::If { cond, then_body, else_body } => {
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 let mut s = format!("{pad}if ({}) {{\n", self.gen_expr(cond)?);
                 for st in then_body {
                     s.push_str(&self.gen_stmt(st, indent + 1)?);
@@ -122,7 +130,7 @@ impl CodeGenerator {
                 s.push_str(&format!("{pad}}}\n"));
                 Ok(s)
             }
-            Stmt::Break    => Ok(format!("{pad}break;\n")),
+            Stmt::Break => Ok(format!("{pad}break;\n")),
             Stmt::Continue => Ok(format!("{pad}continue;\n")),
             Stmt::Expr(expr) => Ok(format!("{pad}{};\n", self.gen_expr(expr)?)),
         }
@@ -130,18 +138,28 @@ impl CodeGenerator {
 
     fn gen_expr(&self, expr: &Expr) -> Result<String, CodegenError> {
         match expr {
-            Expr::StringLit(s) => Ok(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))),
-            Expr::IntLit(n)    => Ok(n.to_string()),
-            Expr::BoolLit(b)   => Ok(b.to_string()),
-            Expr::Ident(name)  => Ok(name.clone()),
-            Expr::This         => Ok("this".into()),
+            Expr::StringLit(s) => Ok(format!(
+                "\"{}\"",
+                s.replace('\\', "\\\\").replace('"', "\\\"")
+            )),
+            Expr::IntLit(n) => Ok(n.to_string()),
+            Expr::BoolLit(b) => Ok(b.to_string()),
+            Expr::Ident(name) => Ok(name.clone()),
+            Expr::This => Ok("this".into()),
 
-            Expr::FieldAccess(obj, field) => {
-                Ok(format!("{}.{}", self.gen_expr(obj)?, field))
-            }
-            Expr::MethodCall { receiver, method, args } => {
+            Expr::FieldAccess(obj, field) => Ok(format!("{}.{}", self.gen_expr(obj)?, field)),
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
                 let args_js: Result<Vec<_>, _> = args.iter().map(|a| self.gen_expr(a)).collect();
-                Ok(format!("{}.{}({})", self.gen_expr(receiver)?, method, args_js?.join(", ")))
+                Ok(format!(
+                    "{}.{}({})",
+                    self.gen_expr(receiver)?,
+                    method,
+                    args_js?.join(", ")
+                ))
             }
             Expr::Call { callee, args } => {
                 let args_js: Result<Vec<_>, _> = args.iter().map(|a| self.gen_expr(a)).collect();
@@ -162,7 +180,10 @@ impl CodeGenerator {
             }
             Expr::Unary { op, expr } => {
                 let inner = self.gen_expr(expr)?;
-                let op_str = match op { UnOp::Not => "!", UnOp::Neg => "-" };
+                let op_str = match op {
+                    UnOp::Not => "!",
+                    UnOp::Neg => "-",
+                };
                 Ok(format!("({op_str}{inner})"))
             }
         }
@@ -221,7 +242,9 @@ impl CodeGenerator {
 }
 
 impl Default for CodeGenerator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Embedded JS runtime ───────────────────────────────────────────────────────

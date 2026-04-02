@@ -1,6 +1,6 @@
 use crate::application::{credentials, project::NexaProject, updater};
 use nexa_compiler::{compile_project_file, compile_to_bundle, decode_nxb, CodeGenerator};
-use nexa_server::{AppState, build_router};
+use nexa_server::{build_router, AppState};
 use notify::{Config as WatchConfig, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -20,29 +20,36 @@ pub fn load_project(dir: Option<PathBuf>) -> NexaProject {
 
 pub fn init(name: Option<String>, author: Option<String>, version: String, no_git: bool) {
     // ── resolve project name and target directory ─────────────────────────────
-    let project_name = name
-        .clone()
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| "my-app".to_string())
-        });
+    let project_name = name.clone().unwrap_or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "my-app".to_string())
+    });
 
     // Validate name: only lowercase alphanumerics, hyphens, underscores
-    if !project_name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        eprintln!("error: project name '{}' must only contain letters, digits, hyphens or underscores", project_name);
+    if !project_name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        eprintln!(
+            "error: project name '{}' must only contain letters, digits, hyphens or underscores",
+            project_name
+        );
         std::process::exit(1);
     }
 
     let root = match name {
         Some(_) => PathBuf::from(&project_name),
-        None    => PathBuf::from("."),
+        None => PathBuf::from("."),
     };
 
     // ── guard: refuse to clobber an existing project ─────────────────────────
     if root.join("project.json").exists() {
-        eprintln!("error: a Nexa project already exists in '{}'", root.display());
+        eprintln!(
+            "error: a Nexa project already exists in '{}'",
+            root.display()
+        );
         eprintln!("       Delete project.json first if you want to reinitialise.");
         std::process::exit(1);
     }
@@ -76,8 +83,8 @@ pub fn init(name: Option<String>, author: Option<String>, version: String, no_gi
   "dependencies": {{}}
 }}
 "#,
-        name   = project_name,
-        ver    = version,
+        name = project_name,
+        ver = version,
         author = author_str,
     );
     write_file(&root.join("project.json"), &project_json);
@@ -155,7 +162,10 @@ nexa-libs/
 
     // ── success message ───────────────────────────────────────────────────────
     println!();
-    println!("  \x1b[1;32m✓\x1b[0m  Created Nexa project \x1b[1m{}\x1b[0m", project_name);
+    println!(
+        "  \x1b[1;32m✓\x1b[0m  Created Nexa project \x1b[1m{}\x1b[0m",
+        project_name
+    );
     println!();
     println!("  \x1b[2m{}/\x1b[0m", root.display());
     println!("  \x1b[2m├── project.json\x1b[0m");
@@ -196,7 +206,7 @@ fn to_pascal_case(s: &str) -> String {
         .map(|p| {
             let mut chars = p.chars();
             match chars.next() {
-                None    => String::new(),
+                None => String::new(),
                 Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
             }
         })
@@ -209,12 +219,12 @@ mod init_tests {
 
     #[test]
     fn pascal_case_conversion() {
-        assert_eq!(to_pascal_case("my-app"),        "MyApp");
-        assert_eq!(to_pascal_case("hello_world"),   "HelloWorld");
-        assert_eq!(to_pascal_case("my-cool-app"),   "MyCoolApp");
-        assert_eq!(to_pascal_case("app"),            "App");
-        assert_eq!(to_pascal_case("a-b-c"),          "ABC");
-        assert_eq!(to_pascal_case(""),               "");
+        assert_eq!(to_pascal_case("my-app"), "MyApp");
+        assert_eq!(to_pascal_case("hello_world"), "HelloWorld");
+        assert_eq!(to_pascal_case("my-cool-app"), "MyCoolApp");
+        assert_eq!(to_pascal_case("app"), "App");
+        assert_eq!(to_pascal_case("a-b-c"), "ABC");
+        assert_eq!(to_pascal_case(""), "");
     }
 }
 
@@ -241,11 +251,18 @@ pub async fn run(
 ) {
     // If a .nexa bundle is provided, serve it directly
     if let Some(bundle_path) = bundle {
-        if bundle_path.extension().map(|e| e == "nexa").unwrap_or(false) {
+        if bundle_path
+            .extension()
+            .map(|e| e == "nexa")
+            .unwrap_or(false)
+        {
             run_from_bundle(bundle_path, port_override).await;
             return;
         } else {
-            eprintln!("error: expected a .nexa file, got '{}'", bundle_path.display());
+            eprintln!(
+                "error: expected a .nexa file, got '{}'",
+                bundle_path.display()
+            );
             std::process::exit(1);
         }
     }
@@ -263,33 +280,37 @@ pub async fn run(
     let dist = proj.dist_dir();
     let _ = fs::create_dir_all(&dist);
     let _ = fs::write(dist.join("index.html"), &result.html);
-    let _ = fs::write(dist.join("app.js"),     &result.js);
+    let _ = fs::write(dist.join("app.js"), &result.js);
 
-    let port  = port_override.unwrap_or(3000);
+    let port = port_override.unwrap_or(3000);
     let state = Arc::new(AppState::new(result.html, result.js, port));
 
     if watch {
         println!("Watch mode — watching {}", proj.src_root().display());
         let state_clone = state.clone();
-        let proj_clone  = proj.clone();
+        let proj_clone = proj.clone();
         tokio::spawn(async move {
             watch_task(state_clone, proj_clone).await;
         });
     }
 
-    let router   = build_router(state);
-    let addr     = format!("0.0.0.0:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
-        eprintln!("Cannot bind to {addr}: {e}");
-        std::process::exit(1);
-    });
+    let router = build_router(state);
+    let addr = format!("0.0.0.0:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Cannot bind to {addr}: {e}");
+            std::process::exit(1);
+        });
     println!("Nexa dev server → http://localhost:{port}");
-    axum::serve(listener, router.into_make_service()).await.unwrap();
+    axum::serve(listener, router.into_make_service())
+        .await
+        .unwrap();
 }
 
 pub fn package(project_dir: Option<PathBuf>, output: Option<PathBuf>) {
     let proj = load_project(project_dir);
-    let app_name    = proj.project.name.clone();
+    let app_name = proj.project.name.clone();
     let app_version = proj.project.version.clone();
 
     println!("Packaging {} v{} ...", app_name, app_version);
@@ -315,17 +336,21 @@ pub fn package(project_dir: Option<PathBuf>, output: Option<PathBuf>) {
     });
 
     let mut zip = zip::ZipWriter::new(file);
-    let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let opts: zip::write::FileOptions<'_, ()> =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     zip.start_file("app.nxb", opts).expect("zip: app.nxb");
     zip.write_all(&bundle.nxb).expect("zip: write nxb");
 
-    zip.start_file("manifest.json", opts).expect("zip: manifest.json");
-    zip.write_all(bundle.manifest.as_bytes()).expect("zip: write manifest");
+    zip.start_file("manifest.json", opts)
+        .expect("zip: manifest.json");
+    zip.write_all(bundle.manifest.as_bytes())
+        .expect("zip: write manifest");
 
-    zip.start_file("signature.sig", opts).expect("zip: signature.sig");
-    zip.write_all(bundle.signature.as_bytes()).expect("zip: write sig");
+    zip.start_file("signature.sig", opts)
+        .expect("zip: signature.sig");
+    zip.write_all(bundle.signature.as_bytes())
+        .expect("zip: write sig");
 
     zip.finish().expect("zip: finish");
 
@@ -344,9 +369,9 @@ async fn run_from_bundle(bundle_path: PathBuf, port_override: Option<u16>) {
         std::process::exit(1);
     });
 
-    let nxb_bytes      = read_zip_entry(&mut archive, "app.nxb");
+    let nxb_bytes = read_zip_entry(&mut archive, "app.nxb");
     let manifest_bytes = read_zip_entry(&mut archive, "manifest.json");
-    let sig_bytes      = read_zip_entry(&mut archive, "signature.sig");
+    let sig_bytes = read_zip_entry(&mut archive, "signature.sig");
 
     // Validate signature
     let expected_sig = String::from_utf8_lossy(&sig_bytes).trim().to_string();
@@ -375,15 +400,19 @@ async fn run_from_bundle(bundle_path: PathBuf, port_override: Option<u16>) {
         .or_else(|| program.server.as_ref().map(|s| s.port))
         .unwrap_or(3000);
 
-    let state    = Arc::new(AppState::new(result.html, result.js, port));
-    let router   = build_router(state);
-    let addr     = format!("0.0.0.0:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
-        eprintln!("Cannot bind to {addr}: {e}");
-        std::process::exit(1);
-    });
+    let state = Arc::new(AppState::new(result.html, result.js, port));
+    let router = build_router(state);
+    let addr = format!("0.0.0.0:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Cannot bind to {addr}: {e}");
+            std::process::exit(1);
+        });
     println!("Nexa dev server (bundle) → http://localhost:{port}");
-    axum::serve(listener, router.into_make_service()).await.unwrap();
+    axum::serve(listener, router.into_make_service())
+        .await
+        .unwrap();
 }
 
 fn read_zip_entry(archive: &mut zip::ZipArchive<fs::File>, name: &str) -> Vec<u8> {
@@ -454,17 +483,27 @@ pub fn register(registry_override: Option<String>) {
     let (email, password) = prompt_credentials();
     println!("Registering on {} ...", registry);
     let url = format!("{registry}/auth/register");
-    match post_json(&url, &serde_json::json!({ "email": email, "password": password }), None) {
+    match post_json(
+        &url,
+        &serde_json::json!({ "email": email, "password": password }),
+        None,
+    ) {
         Ok(body) => {
             if let Some(token) = body["token"].as_str() {
                 credentials::save(&registry, token);
                 println!("Account created. Logged in as {email}");
             } else {
-                eprintln!("error: {}", body["error"].as_str().unwrap_or("unknown error"));
+                eprintln!(
+                    "error: {}",
+                    body["error"].as_str().unwrap_or("unknown error")
+                );
                 std::process::exit(1);
             }
         }
-        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -473,23 +512,33 @@ pub fn login(registry_override: Option<String>) {
     let (email, password) = prompt_credentials();
     println!("Logging in to {} ...", registry);
     let url = format!("{registry}/auth/login");
-    match post_json(&url, &serde_json::json!({ "email": email, "password": password }), None) {
+    match post_json(
+        &url,
+        &serde_json::json!({ "email": email, "password": password }),
+        None,
+    ) {
         Ok(body) => {
             if let Some(token) = body["token"].as_str() {
                 credentials::save(&registry, token);
                 println!("Logged in as {email}");
             } else {
-                eprintln!("error: {}", body["error"].as_str().unwrap_or("invalid credentials"));
+                eprintln!(
+                    "error: {}",
+                    body["error"].as_str().unwrap_or("invalid credentials")
+                );
                 std::process::exit(1);
             }
         }
-        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
 pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) {
     let proj = load_project(project_dir);
-    let app_name    = proj.project.name.clone();
+    let app_name = proj.project.name.clone();
     let app_version = proj.project.version.clone();
 
     let creds = credentials::load().unwrap_or_else(|| {
@@ -499,9 +548,17 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
     let registry = registry_override.unwrap_or(creds.registry.clone());
 
     println!("Packaging {} v{} ...", app_name, app_version);
-    let bundle = match compile_to_bundle(&proj.entry_file(), &proj.src_root(), &app_name, &app_version) {
+    let bundle = match compile_to_bundle(
+        &proj.entry_file(),
+        &proj.src_root(),
+        &app_name,
+        &app_version,
+    ) {
         Ok(b) => b,
-        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     };
 
     // Write bundle to a temp file
@@ -509,11 +566,12 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
     {
         use std::io::Write as _;
         let file = fs::File::create(&tmp_path).unwrap_or_else(|e| {
-            eprintln!("error: {e}"); std::process::exit(1);
+            eprintln!("error: {e}");
+            std::process::exit(1);
         });
         let mut zip = zip::ZipWriter::new(file);
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let opts: zip::write::FileOptions<'_, ()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         zip.start_file("app.nxb", opts).unwrap();
         zip.write_all(&bundle.nxb).unwrap();
         zip.start_file("manifest.json", opts).unwrap();
@@ -526,7 +584,8 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
     println!("Publishing {app_name}@{app_version} to {registry} ...");
     let url = format!("{registry}/packages/{app_name}/publish");
     let file_bytes = fs::read(&tmp_path).unwrap_or_else(|e| {
-        eprintln!("error: {e}"); std::process::exit(1);
+        eprintln!("error: {e}");
+        std::process::exit(1);
     });
     let _ = fs::remove_file(&tmp_path);
 
@@ -548,10 +607,16 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
         }
         Ok(resp) => {
             let body: serde_json::Value = resp.json().unwrap_or_default();
-            eprintln!("error: {}", body["error"].as_str().unwrap_or("publish failed"));
+            eprintln!(
+                "error: {}",
+                body["error"].as_str().unwrap_or("publish failed")
+            );
             std::process::exit(1);
         }
-        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -568,7 +633,8 @@ pub fn install(package_arg: Option<String>, project_dir: Option<PathBuf>) {
         }
     } else {
         // Install all deps from project.json
-        proj.project.dependencies
+        proj.project
+            .dependencies
             .iter()
             .map(|(name, ver)| (name.clone(), ver.trim_start_matches('^').to_string()))
             .collect()
@@ -581,7 +647,8 @@ pub fn install(package_arg: Option<String>, project_dir: Option<PathBuf>) {
 
     let libs_dir = proj.libs_dir();
     fs::create_dir_all(&libs_dir).unwrap_or_else(|e| {
-        eprintln!("error: cannot create nexa-libs/: {e}"); std::process::exit(1);
+        eprintln!("error: cannot create nexa-libs/: {e}");
+        std::process::exit(1);
     });
 
     let mut lock = load_lockfile(&libs_dir);
@@ -632,7 +699,10 @@ fn prompt_credentials() -> (String, String) {
     print!("Email: ");
     std::io::Write::flush(&mut std::io::stdout()).unwrap();
     let stdin = io::stdin();
-    let email = stdin.lock().lines().next()
+    let email = stdin
+        .lock()
+        .lines()
+        .next()
         .and_then(|l| l.ok())
         .unwrap_or_default()
         .trim()
@@ -641,7 +711,11 @@ fn prompt_credentials() -> (String, String) {
     (email, password)
 }
 
-fn post_json(url: &str, body: &serde_json::Value, token: Option<&str>) -> Result<serde_json::Value, String> {
+fn post_json(
+    url: &str,
+    body: &serde_json::Value,
+    token: Option<&str>,
+) -> Result<serde_json::Value, String> {
     let client = reqwest::blocking::Client::new();
     let mut req = client.post(url).json(body);
     if let Some(t) = token {
@@ -651,7 +725,11 @@ fn post_json(url: &str, body: &serde_json::Value, token: Option<&str>) -> Result
     resp.json::<serde_json::Value>().map_err(|e| e.to_string())
 }
 
-fn try_download(registries: &[(String, Option<String>)], name: &str, version: &str) -> Option<(String, Vec<u8>)> {
+fn try_download(
+    registries: &[(String, Option<String>)],
+    name: &str,
+    version: &str,
+) -> Option<(String, Vec<u8>)> {
     let client = reqwest::blocking::Client::new();
     for (url, key) in registries {
         let endpoint = format!("{url}/packages/{name}/{version}/download");
@@ -674,26 +752,36 @@ fn verify_bundle_signature(bundle: &[u8], name: &str) {
     use std::io::{Cursor, Read as _};
     let cursor = Cursor::new(bundle);
     let mut archive = zip::ZipArchive::new(cursor).unwrap_or_else(|e| {
-        eprintln!("error: invalid bundle for {name}: {e}"); std::process::exit(1);
+        eprintln!("error: invalid bundle for {name}: {e}");
+        std::process::exit(1);
     });
 
     let nxb = {
         let mut e = archive.by_name("app.nxb").unwrap_or_else(|_| {
-            eprintln!("error: bundle missing app.nxb"); std::process::exit(1);
+            eprintln!("error: bundle missing app.nxb");
+            std::process::exit(1);
         });
-        let mut buf = Vec::new(); e.read_to_end(&mut buf).unwrap(); buf
+        let mut buf = Vec::new();
+        e.read_to_end(&mut buf).unwrap();
+        buf
     };
     let manifest_str = {
         let mut e = archive.by_name("manifest.json").unwrap_or_else(|_| {
-            eprintln!("error: bundle missing manifest.json"); std::process::exit(1);
+            eprintln!("error: bundle missing manifest.json");
+            std::process::exit(1);
         });
-        let mut buf = String::new(); e.read_to_string(&mut buf).unwrap(); buf
+        let mut buf = String::new();
+        e.read_to_string(&mut buf).unwrap();
+        buf
     };
     let sig_str = {
         let mut e = archive.by_name("signature.sig").unwrap_or_else(|_| {
-            eprintln!("error: bundle missing signature.sig"); std::process::exit(1);
+            eprintln!("error: bundle missing signature.sig");
+            std::process::exit(1);
         });
-        let mut buf = String::new(); e.read_to_string(&mut buf).unwrap(); buf
+        let mut buf = String::new();
+        e.read_to_string(&mut buf).unwrap();
+        buf
     };
 
     let mut hasher = Sha256::new();
@@ -709,7 +797,8 @@ fn verify_bundle_signature(bundle: &[u8], name: &str) {
 fn extract_bundle_to(bundle: &[u8], dest: &Path) {
     use std::io::{Cursor, Read as _};
     fs::create_dir_all(dest).unwrap_or_else(|e| {
-        eprintln!("error: cannot create {}: {e}", dest.display()); std::process::exit(1);
+        eprintln!("error: cannot create {}: {e}", dest.display());
+        std::process::exit(1);
     });
     let cursor = Cursor::new(bundle);
     let mut archive = zip::ZipArchive::new(cursor).unwrap();
@@ -719,7 +808,8 @@ fn extract_bundle_to(bundle: &[u8], dest: &Path) {
         let mut buf = Vec::new();
         entry.read_to_end(&mut buf).unwrap();
         fs::write(&out_path, &buf).unwrap_or_else(|e| {
-            eprintln!("error: write {}: {e}", out_path.display()); std::process::exit(1);
+            eprintln!("error: write {}: {e}", out_path.display());
+            std::process::exit(1);
         });
     }
 }
@@ -760,7 +850,7 @@ fn save_lockfile(libs_dir: &Path, lock: &Lockfile) {
 pub fn write_dist(dist_dir: &Path, result: nexa_compiler::CompileResult) {
     fs::create_dir_all(dist_dir).expect("cannot create dist/");
     fs::write(dist_dir.join("index.html"), &result.html).expect("cannot write index.html");
-    fs::write(dist_dir.join("app.js"),     &result.js).expect("cannot write app.js");
+    fs::write(dist_dir.join("app.js"), &result.js).expect("cannot write app.js");
     println!("Build OK → {}", dist_dir.display());
 }
 

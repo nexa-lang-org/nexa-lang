@@ -1,5 +1,5 @@
-use crate::domain::ast::*;
 use crate::application::services::lexer::{Spanned, Token};
+use crate::domain::ast::*;
 use crate::domain::span::Span;
 use thiserror::Error;
 
@@ -36,7 +36,10 @@ impl Parser {
     // ── Token navigation ────────────────────────────────────────────────────
 
     fn peek(&self) -> &Token {
-        self.tokens.get(self.pos).map(|s| &s.token).unwrap_or(&Token::Eof)
+        self.tokens
+            .get(self.pos)
+            .map(|s| &s.token)
+            .unwrap_or(&Token::Eof)
     }
 
     fn peek_spanned(&self) -> Spanned {
@@ -55,7 +58,11 @@ impl Parser {
             self.advance();
             Ok(())
         } else {
-            Err(ParseError::Expected(format!("{expected:?}"), s.token, s.span))
+            Err(ParseError::Expected(
+                format!("{expected:?}"),
+                s.token,
+                s.span,
+            ))
         }
     }
 
@@ -75,7 +82,12 @@ impl Parser {
         let mut parts = vec![self.expect_ident()?];
         while self.peek() == &Token::Dot {
             // only consume the dot if followed by an ident
-            if self.tokens.get(self.pos + 1).map(|s| matches!(s.token, Token::Ident(_))).unwrap_or(false) {
+            if self
+                .tokens
+                .get(self.pos + 1)
+                .map(|s| matches!(s.token, Token::Ident(_)))
+                .unwrap_or(false)
+            {
                 self.advance(); // dot
                 parts.push(self.expect_ident()?);
             } else {
@@ -118,9 +130,13 @@ impl Parser {
             match self.peek() {
                 Token::RBrace | Token::Eof => break,
                 Token::Server => server = Some(self.parse_server()?),
-                Token::Route  => routes.push(self.parse_route()?),
-                Token::Public | Token::Private | Token::Class | Token::Interface
-                | Token::Component | Token::Window => {
+                Token::Route => routes.push(self.parse_route()?),
+                Token::Public
+                | Token::Private
+                | Token::Class
+                | Token::Interface
+                | Token::Component
+                | Token::Window => {
                     declarations.push(self.parse_declaration()?);
                 }
                 _ => {
@@ -130,7 +146,14 @@ impl Parser {
             }
         }
         self.expect(&Token::RBrace)?;
-        Ok(Program { name, package, imports, server, declarations, routes })
+        Ok(Program {
+            name,
+            package,
+            imports,
+            server,
+            declarations,
+            routes,
+        })
     }
 
     /// Parse a library file: only package + declarations (no `app` block).
@@ -187,10 +210,15 @@ impl Parser {
     fn parse_route(&mut self) -> Result<Route, ParseError> {
         self.expect(&Token::Route)?;
         let path = if let Token::StringLit(s) = self.peek().clone() {
-            self.advance(); s
+            self.advance();
+            s
         } else {
             let s = self.peek_spanned();
-            return Err(ParseError::Expected("string literal".into(), s.token, s.span));
+            return Err(ParseError::Expected(
+                "string literal".into(),
+                s.token,
+                s.span,
+            ));
         };
         self.expect(&Token::FatArrow)?;
         let target = self.expect_ident()?;
@@ -201,9 +229,15 @@ impl Parser {
     // ── Visibility ──────────────────────────────────────────────────────────
     fn parse_visibility(&mut self) -> Visibility {
         match self.peek() {
-            Token::Public  => { self.advance(); Visibility::Public }
-            Token::Private => { self.advance(); Visibility::Private }
-            _              => Visibility::Public,
+            Token::Public => {
+                self.advance();
+                Visibility::Public
+            }
+            Token::Private => {
+                self.advance();
+                Visibility::Private
+            }
+            _ => Visibility::Public,
         }
     }
 
@@ -230,7 +264,9 @@ impl Parser {
 
     // ── Generic type params <T, U> ──────────────────────────────────────────
     fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
-        if self.peek() != &Token::LAngle { return Ok(vec![]); }
+        if self.peek() != &Token::LAngle {
+            return Ok(vec![]);
+        }
         self.advance(); // <
         let mut params = vec![self.expect_ident()?];
         while self.peek() == &Token::Comma {
@@ -249,7 +285,9 @@ impl Parser {
             let mut param_types = Vec::new();
             while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
                 param_types.push(self.parse_type()?);
-                if self.peek() == &Token::Comma { self.advance(); }
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                }
             }
             self.expect(&Token::RParen)?;
             self.expect(&Token::FatArrow)?;
@@ -257,11 +295,23 @@ impl Parser {
             return Ok(Type::Function(param_types, Box::new(ret)));
         }
         match self.peek().clone() {
-            Token::TInt    => { self.advance(); Ok(Type::Int) }
-            Token::TString => { self.advance(); Ok(Type::String) }
-            Token::TBool   => { self.advance(); Ok(Type::Bool) }
-            Token::TVoid   => { self.advance(); Ok(Type::Void) }
-            Token::TList   => {
+            Token::TInt => {
+                self.advance();
+                Ok(Type::Int)
+            }
+            Token::TString => {
+                self.advance();
+                Ok(Type::String)
+            }
+            Token::TBool => {
+                self.advance();
+                Ok(Type::Bool)
+            }
+            Token::TVoid => {
+                self.advance();
+                Ok(Type::Void)
+            }
+            Token::TList => {
                 self.advance();
                 self.expect(&Token::LAngle)?;
                 let inner = self.parse_type()?;
@@ -293,7 +343,9 @@ impl Parser {
             self.expect(&Token::Colon)?;
             let ty = self.parse_type()?;
             params.push(Param { name, ty });
-            if self.peek() == &Token::Comma { self.advance(); }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            }
         }
         self.expect(&Token::RParen)?;
         Ok(params)
@@ -302,9 +354,18 @@ impl Parser {
     // ── Class / Component / Window ──────────────────────────────────────────
     fn parse_class(&mut self) -> Result<ClassDecl, ParseError> {
         let kind = match self.peek() {
-            Token::Class     => { self.advance(); ClassKind::Class }
-            Token::Component => { self.advance(); ClassKind::Component }
-            Token::Window    => { self.advance(); ClassKind::Window }
+            Token::Class => {
+                self.advance();
+                ClassKind::Class
+            }
+            Token::Component => {
+                self.advance();
+                ClassKind::Component
+            }
+            Token::Window => {
+                self.advance();
+                ClassKind::Window
+            }
             _ => {
                 let s = self.peek_spanned();
                 return Err(ParseError::Unexpected(s.token, s.span));
@@ -349,7 +410,11 @@ impl Parser {
                         let ty = self.parse_type()?;
                         let fname = self.expect_ident()?;
                         self.expect(&Token::Semicolon)?;
-                        fields.push(Field { visibility: vis, ty, name: fname });
+                        fields.push(Field {
+                            visibility: vis,
+                            ty,
+                            name: fname,
+                        });
                     } else {
                         methods.push(self.parse_method(vis)?);
                     }
@@ -358,7 +423,11 @@ impl Parser {
                     let ty = self.parse_type()?;
                     let fname = self.expect_ident()?;
                     self.expect(&Token::Semicolon)?;
-                    fields.push(Field { visibility: Visibility::Private, ty, name: fname });
+                    fields.push(Field {
+                        visibility: Visibility::Private,
+                        ty,
+                        name: fname,
+                    });
                 }
                 Token::Ident(_) => {
                     methods.push(self.parse_method(Visibility::Public)?);
@@ -372,20 +441,31 @@ impl Parser {
         self.expect(&Token::RBrace)?;
         Ok(ClassDecl {
             visibility: Visibility::Public,
-            kind, name, type_params, extends, implements,
-            fields, constructor, methods,
+            kind,
+            name,
+            type_params,
+            extends,
+            implements,
+            fields,
+            constructor,
+            methods,
         })
     }
 
     fn is_type_start(&self) -> bool {
-        matches!(self.peek(), Token::TInt | Token::TString | Token::TBool | Token::TVoid | Token::TList)
+        matches!(
+            self.peek(),
+            Token::TInt | Token::TString | Token::TBool | Token::TVoid | Token::TList
+        )
     }
 
     fn parse_method(&mut self, vis: Visibility) -> Result<Method, ParseError> {
         let name = self.expect_ident()?;
         if self.peek() == &Token::LAngle {
             self.advance();
-            while self.peek() != &Token::RAngle && self.peek() != &Token::Eof { self.advance(); }
+            while self.peek() != &Token::RAngle && self.peek() != &Token::Eof {
+                self.advance();
+            }
             self.expect(&Token::RAngle)?;
         }
         let params = self.parse_params()?;
@@ -394,7 +474,13 @@ impl Parser {
         self.expect(&Token::LBrace)?;
         let body = self.parse_body()?;
         self.expect(&Token::RBrace)?;
-        Ok(Method { visibility: vis, name, params, return_type, body })
+        Ok(Method {
+            visibility: vis,
+            name,
+            params,
+            return_type,
+            body,
+        })
     }
 
     // ── Interface ───────────────────────────────────────────────────────────
@@ -410,10 +496,19 @@ impl Parser {
             self.expect(&Token::FatArrow)?;
             let return_type = self.parse_type()?;
             self.expect(&Token::Semicolon)?;
-            methods.push(MethodSig { name: method_name, params, return_type });
+            methods.push(MethodSig {
+                name: method_name,
+                params,
+                return_type,
+            });
         }
         self.expect(&Token::RBrace)?;
-        Ok(InterfaceDecl { visibility: Visibility::Public, name, type_params, methods })
+        Ok(InterfaceDecl {
+            visibility: Visibility::Public,
+            name,
+            type_params,
+            methods,
+        })
     }
 
     // ── Statement body ──────────────────────────────────────────────────────
@@ -447,7 +542,11 @@ impl Parser {
                 self.expect(&Token::Equals)?;
                 let value = self.parse_expr()?;
                 self.expect(&Token::Semicolon)?;
-                Ok(Stmt::Assign { object: Expr::This, field, value })
+                Ok(Stmt::Assign {
+                    object: Expr::This,
+                    field,
+                    value,
+                })
             }
 
             // let name [: Type] = expr;
@@ -484,7 +583,11 @@ impl Parser {
                 } else {
                     None
                 };
-                Ok(Stmt::If { cond, then_body, else_body })
+                Ok(Stmt::If {
+                    cond,
+                    then_body,
+                    else_body,
+                })
             }
 
             // while (cond) { body }
@@ -534,7 +637,11 @@ impl Parser {
                         self.advance(); // =
                         let value = self.parse_expr()?;
                         self.expect(&Token::Semicolon)?;
-                        return Ok(Stmt::Assign { object: Expr::Ident(name.clone()), field: name, value });
+                        return Ok(Stmt::Assign {
+                            object: Expr::Ident(name.clone()),
+                            field: name,
+                            value,
+                        });
                     }
                 }
                 self.expect(&Token::Semicolon)?;
@@ -554,29 +661,35 @@ impl Parser {
 
         while let Some(op) = self.token_to_binop() {
             let (l_bp, r_bp) = op.binding_power();
-            if l_bp < min_bp { break; }
+            if l_bp < min_bp {
+                break;
+            }
             self.advance(); // consume operator
             let right = self.parse_binary(r_bp)?;
-            left = Expr::Binary { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
 
     fn token_to_binop(&self) -> Option<BinOp> {
         match self.peek() {
-            Token::Or          => Some(BinOp::Or),
-            Token::And         => Some(BinOp::And),
-            Token::EqualEqual  => Some(BinOp::Eq),
-            Token::BangEqual   => Some(BinOp::Ne),
-            Token::LAngle      => Some(BinOp::Lt),
-            Token::RAngle      => Some(BinOp::Gt),
-            Token::LessEqual   => Some(BinOp::Le),
-            Token::GreaterEqual=> Some(BinOp::Ge),
-            Token::Plus        => Some(BinOp::Add),
-            Token::Minus       => Some(BinOp::Sub),
-            Token::Star        => Some(BinOp::Mul),
-            Token::Slash       => Some(BinOp::Div),
-            Token::Percent     => Some(BinOp::Mod),
+            Token::Or => Some(BinOp::Or),
+            Token::And => Some(BinOp::And),
+            Token::EqualEqual => Some(BinOp::Eq),
+            Token::BangEqual => Some(BinOp::Ne),
+            Token::LAngle => Some(BinOp::Lt),
+            Token::RAngle => Some(BinOp::Gt),
+            Token::LessEqual => Some(BinOp::Le),
+            Token::GreaterEqual => Some(BinOp::Ge),
+            Token::Plus => Some(BinOp::Add),
+            Token::Minus => Some(BinOp::Sub),
+            Token::Star => Some(BinOp::Mul),
+            Token::Slash => Some(BinOp::Div),
+            Token::Percent => Some(BinOp::Mod),
             _ => None,
         }
     }
@@ -586,12 +699,18 @@ impl Parser {
             Token::Bang => {
                 self.advance();
                 let expr = self.parse_unary()?;
-                Ok(Expr::Unary { op: UnOp::Not, expr: Box::new(expr) })
+                Ok(Expr::Unary {
+                    op: UnOp::Not,
+                    expr: Box::new(expr),
+                })
             }
             Token::Minus => {
                 self.advance();
                 let expr = self.parse_unary()?;
-                Ok(Expr::Unary { op: UnOp::Neg, expr: Box::new(expr) })
+                Ok(Expr::Unary {
+                    op: UnOp::Neg,
+                    expr: Box::new(expr),
+                })
             }
             _ => self.parse_postfix(),
         }
@@ -605,7 +724,11 @@ impl Parser {
                 let field = self.expect_ident()?;
                 if self.peek() == &Token::LParen {
                     let args = self.parse_call_args()?;
-                    expr = Expr::MethodCall { receiver: Box::new(expr), method: field, args };
+                    expr = Expr::MethodCall {
+                        receiver: Box::new(expr),
+                        method: field,
+                        args,
+                    };
                 } else {
                     expr = Expr::FieldAccess(Box::new(expr), field);
                 }
@@ -624,17 +747,32 @@ impl Parser {
                 self.advance(); // =>
                 let body = self.parse_expr()?;
                 return Ok(Expr::Lambda {
-                    params: vec![Param { name, ty: Type::Custom("T".into()) }],
+                    params: vec![Param {
+                        name,
+                        ty: Type::Custom("T".into()),
+                    }],
                     body: Box::new(body),
                 });
             }
         }
 
         match self.peek().clone() {
-            Token::StringLit(s) => { self.advance(); Ok(Expr::StringLit(s)) }
-            Token::IntLit(n)    => { self.advance(); Ok(Expr::IntLit(n)) }
-            Token::BoolLit(b)   => { self.advance(); Ok(Expr::BoolLit(b)) }
-            Token::This         => { self.advance(); Ok(Expr::This) }
+            Token::StringLit(s) => {
+                self.advance();
+                Ok(Expr::StringLit(s))
+            }
+            Token::IntLit(n) => {
+                self.advance();
+                Ok(Expr::IntLit(n))
+            }
+            Token::BoolLit(b) => {
+                self.advance();
+                Ok(Expr::BoolLit(b))
+            }
+            Token::This => {
+                self.advance();
+                Ok(Expr::This)
+            }
 
             // Parenthesised expression
             Token::LParen => {
@@ -656,10 +794,15 @@ impl Parser {
                     let mut children = Vec::new();
                     while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
                         children.push(self.parse_expr()?);
-                        if self.peek() == &Token::Semicolon { self.advance(); }
+                        if self.peek() == &Token::Semicolon {
+                            self.advance();
+                        }
                     }
                     self.expect(&Token::RBrace)?;
-                    Ok(Expr::Block { tag: name, children })
+                    Ok(Expr::Block {
+                        tag: name,
+                        children,
+                    })
                 } else {
                     Ok(Expr::Ident(name))
                 }
@@ -677,7 +820,9 @@ impl Parser {
         let mut args = Vec::new();
         while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
             args.push(self.parse_expr()?);
-            if self.peek() == &Token::Comma { self.advance(); }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            }
         }
         self.expect(&Token::RParen)?;
         Ok(args)

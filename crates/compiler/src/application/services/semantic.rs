@@ -44,7 +44,10 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        SemanticAnalyzer { classes: HashMap::new(), interfaces: HashMap::new() }
+        SemanticAnalyzer {
+            classes: HashMap::new(),
+            interfaces: HashMap::new(),
+        }
     }
 
     pub fn analyze(&mut self, program: &Program) -> Result<(), SemanticError> {
@@ -82,7 +85,9 @@ impl SemanticAnalyzer {
         // ── Pass 3: validate imports ────────────────────────────────────────
         // The resolver has already merged imported declarations into `program.declarations`,
         // so we just check that each import path's last segment resolves to a known symbol.
-        let all_names: HashSet<&str> = self.classes.keys()
+        let all_names: HashSet<&str> = self
+            .classes
+            .keys()
             .map(|s| s.as_str())
             .chain(self.interfaces.keys().map(|s| s.as_str()))
             .collect();
@@ -109,10 +114,12 @@ impl SemanticAnalyzer {
         // ── Pass 4: validate routes ─────────────────────────────────────────
         for route in &program.routes {
             match self.classes.get(&route.target) {
-                None => return Err(SemanticError::UndefinedType {
-                    name: route.target.clone(),
-                    span: Span::dummy(),
-                }),
+                None => {
+                    return Err(SemanticError::UndefinedType {
+                        name: route.target.clone(),
+                        span: Span::dummy(),
+                    })
+                }
                 Some(cls) if cls.kind != ClassKind::Window => {
                     return Err(SemanticError::NotAWindow {
                         name: route.target.clone(),
@@ -148,5 +155,7 @@ impl SemanticAnalyzer {
 }
 
 impl Default for SemanticAnalyzer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

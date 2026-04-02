@@ -24,10 +24,10 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/auth/register", post(register))
-        .route("/auth/login",    post(login))
-        .route("/packages",                        get(list_packages))
-        .route("/packages/:name",                  get(get_package))
-        .route("/packages/:name/publish",          post(publish))
+        .route("/auth/login", post(login))
+        .route("/packages", get(list_packages))
+        .route("/packages/:name", get(get_package))
+        .route("/packages/:name/publish", post(publish))
         .route("/packages/:name/:version/download", get(download))
         .with_state(state)
 }
@@ -55,8 +55,12 @@ struct SearchQuery {
     per_page: i64,
 }
 
-fn default_page() -> i64 { 1 }
-fn default_per_page() -> i64 { 20 }
+fn default_page() -> i64 {
+    1
+}
+fn default_per_page() -> i64 {
+    20
+}
 
 #[derive(Serialize)]
 struct PackageInfo {
@@ -91,20 +95,14 @@ fn err(status: StatusCode, msg: &str) -> Response {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn register(
-    State(state): State<AppState>,
-    Json(body): Json<AuthBody>,
-) -> Response {
+async fn register(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Response {
     match state.auth.register(&body.email, &body.password).await {
         Ok(token) => (StatusCode::CREATED, Json(TokenResponse { token })).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }
 
-async fn login(
-    State(state): State<AppState>,
-    Json(body): Json<AuthBody>,
-) -> Response {
+async fn login(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Response {
     match state.auth.login(&body.email, &body.password).await {
         Ok(token) => Json(TokenResponse { token }).into_response(),
         Err(e) => err(StatusCode::UNAUTHORIZED, &e.to_string()),
@@ -150,10 +148,7 @@ async fn publish(
     }
 }
 
-async fn get_package(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Response {
+async fn get_package(State(state): State<AppState>, Path(name): Path<String>) -> Response {
     let pkg = match state.packages.get_package(&name).await {
         Ok(Some(p)) => p,
         Ok(None) => return err(StatusCode::NOT_FOUND, "package not found"),
@@ -198,10 +193,7 @@ async fn download(
     }
 }
 
-async fn list_packages(
-    State(state): State<AppState>,
-    Query(q): Query<SearchQuery>,
-) -> Response {
+async fn list_packages(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> Response {
     match state.packages.search(&q.q, q.page, q.per_page).await {
         Ok(pkgs) => {
             let items: Vec<PackageListItem> = pkgs

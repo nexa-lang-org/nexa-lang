@@ -4,10 +4,10 @@
 //! parses them recursively, detects cycles, and merges all declarations into
 //! a single flat `Program` that the semantic analyser and codegen can consume.
 
-use crate::domain::ast::{Declaration, ImportDecl, Program};
+use crate::application::ports::source::SourceProvider;
 use crate::application::services::lexer::Lexer;
 use crate::application::services::parser::Parser;
-use crate::application::ports::source::SourceProvider;
+use crate::domain::ast::{Declaration, ImportDecl, Program};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -126,7 +126,11 @@ impl<S: SourceProvider> Resolver<S> {
     /// 1. Relative to the importing file's directory: `User` → `./User.nx`
     /// 2. Relative root + all parts as dirs + last.nx
     /// 3. Project root / all parts as dirs / last.nx
-    fn resolve_path(&self, import_path: &str, relative_root: &Path) -> Result<PathBuf, ResolveError> {
+    fn resolve_path(
+        &self,
+        import_path: &str,
+        relative_root: &Path,
+    ) -> Result<PathBuf, ResolveError> {
         let parts: Vec<&str> = import_path.split('.').collect();
 
         // Try: relative directory / last_part.nx
@@ -237,7 +241,10 @@ app App {
             .declarations
             .iter()
             .any(|d| matches!(d, Declaration::Class(c) if c.name == "User"));
-        assert!(has_user, "resolved program should contain imported User class");
+        assert!(
+            has_user,
+            "resolved program should contain imported User class"
+        );
     }
 
     #[test]
@@ -255,7 +262,9 @@ app App {
         let entry = parse_entry(entry_source);
         let provider = MemSourceProvider::new();
         let mut resolver = Resolver::new("/src", provider);
-        let err = resolver.resolve(&entry, &PathBuf::from("/src/main/app.nx")).unwrap_err();
+        let err = resolver
+            .resolve(&entry, &PathBuf::from("/src/main/app.nx"))
+            .unwrap_err();
         assert!(matches!(err, ResolveError::NotFound(..)));
     }
 
@@ -278,12 +287,17 @@ app App {
         provider.add("/src/main/Shared.nx", lib_source);
 
         let mut resolver = Resolver::new("/src/main", provider);
-        let resolved = resolver.resolve(&entry, &PathBuf::from("/src/main/app.nx")).unwrap();
+        let resolved = resolver
+            .resolve(&entry, &PathBuf::from("/src/main/app.nx"))
+            .unwrap();
 
         let has_shared = resolved
             .declarations
             .iter()
             .any(|d| matches!(d, Declaration::Class(c) if c.name == "Shared"));
-        assert!(has_shared, "resolved program should contain the imported Shared class");
+        assert!(
+            has_shared,
+            "resolved program should contain the imported Shared class"
+        );
     }
 }

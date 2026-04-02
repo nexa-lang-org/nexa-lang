@@ -28,8 +28,7 @@ pub fn decode_nxb(bytes: &[u8]) -> Result<Program, PackageError> {
         return Err(PackageError::BadMagic);
     }
     let config = bincode::config::standard();
-    let (program, _): (Program, usize) =
-        bincode::serde::decode_from_slice(&bytes[4..], config)?;
+    let (program, _): (Program, usize) = bincode::serde::decode_from_slice(&bytes[4..], config)?;
     Ok(program)
 }
 

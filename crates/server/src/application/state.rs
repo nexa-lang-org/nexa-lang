@@ -3,13 +3,13 @@ use tokio::sync::{broadcast, RwLock};
 
 pub struct SharedState {
     pub html: String,
-    pub js:   String,
+    pub js: String,
 }
 
 pub struct AppState {
     pub shared: Arc<RwLock<SharedState>>,
-    pub port:   u16,
-    pub tx:     broadcast::Sender<String>,
+    pub port: u16,
+    pub tx: broadcast::Sender<String>,
 }
 
 impl AppState {
@@ -27,7 +27,7 @@ impl AppState {
     pub async fn update(&self, html: String, js: String) {
         let mut state = self.shared.write().await;
         state.html = html;
-        state.js   = js;
+        state.js = js;
         drop(state);
         // Ignore error if no clients are connected
         let _ = self.tx.send("reload".to_string());

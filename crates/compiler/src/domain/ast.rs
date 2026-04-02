@@ -30,27 +30,44 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Mod,
-    Eq, Ne, Lt, Gt, Le, Ge,
-    And, Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
 }
 
 impl BinOp {
     pub fn as_js(&self) -> &'static str {
         match self {
-            BinOp::Add => "+",  BinOp::Sub => "-",
-            BinOp::Mul => "*",  BinOp::Div => "/", BinOp::Mod => "%",
-            BinOp::Eq  => "===", BinOp::Ne  => "!==",
-            BinOp::Lt  => "<",  BinOp::Gt  => ">",
-            BinOp::Le  => "<=", BinOp::Ge  => ">=",
-            BinOp::And => "&&", BinOp::Or  => "||",
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Mod => "%",
+            BinOp::Eq => "===",
+            BinOp::Ne => "!==",
+            BinOp::Lt => "<",
+            BinOp::Gt => ">",
+            BinOp::Le => "<=",
+            BinOp::Ge => ">=",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
         }
     }
 
     /// Binding power: higher = tighter. Returns (left_bp, right_bp).
     pub fn binding_power(&self) -> (u8, u8) {
         match self {
-            BinOp::Or  => (1, 2),
+            BinOp::Or => (1, 2),
             BinOp::And => (3, 4),
             BinOp::Eq | BinOp::Ne => (5, 6),
             BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => (7, 8),
@@ -165,13 +182,32 @@ pub struct Route {
 pub enum Stmt {
     Return(Option<Expr>),
     /// this.field = value  OR  ident = value
-    Assign { object: Expr, field: String, value: Expr },
+    Assign {
+        object: Expr,
+        field: String,
+        value: Expr,
+    },
     /// let name [: Type] = expr;
-    Let { name: String, ty: Option<Type>, init: Expr },
-    If { cond: Expr, then_body: Vec<Stmt>, else_body: Option<Vec<Stmt>> },
-    While { cond: Expr, body: Vec<Stmt> },
+    Let {
+        name: String,
+        ty: Option<Type>,
+        init: Expr,
+    },
+    If {
+        cond: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
+    },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
     /// for (name in iter) { body }
-    For { var: String, iter: Expr, body: Vec<Stmt> },
+    For {
+        var: String,
+        iter: Expr,
+        body: Vec<Stmt>,
+    },
     Break,
     Continue,
     Expr(Expr),
@@ -187,11 +223,31 @@ pub enum Expr {
     Ident(String),
     This,
     FieldAccess(Box<Expr>, String),
-    MethodCall { receiver: Box<Expr>, method: String, args: Vec<Expr> },
-    Call { callee: String, args: Vec<Expr> },
-    Lambda { params: Vec<Param>, body: Box<Expr> },
+    MethodCall {
+        receiver: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
+    Call {
+        callee: String,
+        args: Vec<Expr>,
+    },
+    Lambda {
+        params: Vec<Param>,
+        body: Box<Expr>,
+    },
     /// JSX-like block: Tag { child1; child2; }
-    Block { tag: String, children: Vec<Expr> },
-    Binary { op: BinOp, left: Box<Expr>, right: Box<Expr> },
-    Unary  { op: UnOp,  expr: Box<Expr> },
+    Block {
+        tag: String,
+        children: Vec<Expr>,
+    },
+    Binary {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Unary {
+        op: UnOp,
+        expr: Box<Expr>,
+    },
 }

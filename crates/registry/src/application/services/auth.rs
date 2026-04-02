@@ -27,8 +27,8 @@ impl AuthService {
         if self.store.find_by_email(email).await?.is_some() {
             return Err(anyhow!("email already registered"));
         }
-        let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .map_err(|e| anyhow!("hash error: {e}"))?;
+        let hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| anyhow!("hash error: {e}"))?;
         let user = self.store.create(email, &hash).await?;
         self.make_token(user.id)
     }
@@ -55,14 +55,17 @@ impl AuthService {
             &Validation::new(Algorithm::HS256),
         )
         .map_err(|e| anyhow!("invalid token: {e}"))?;
-        let id = Uuid::parse_str(&data.claims.sub)
-            .map_err(|e| anyhow!("invalid token subject: {e}"))?;
+        let id =
+            Uuid::parse_str(&data.claims.sub).map_err(|e| anyhow!("invalid token subject: {e}"))?;
         Ok(id)
     }
 
     fn make_token(&self, user_id: Uuid) -> Result<String> {
         let exp = (Utc::now() + Duration::hours(24)).timestamp();
-        let claims = Claims { sub: user_id.to_string(), exp };
+        let claims = Claims {
+            sub: user_id.to_string(),
+            exp,
+        };
         encode(
             &Header::default(),
             &claims,

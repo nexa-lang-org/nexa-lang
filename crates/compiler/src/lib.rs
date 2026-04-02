@@ -8,8 +8,8 @@ pub use application::services::parser::Parser;
 pub use application::services::resolver::Resolver;
 pub use application::services::semantic::SemanticAnalyzer;
 
-use std::{fmt, path::Path};
 use crate::domain::span::Span;
+use std::{fmt, path::Path};
 
 #[derive(Debug)]
 pub struct CompileResult {
@@ -20,10 +20,10 @@ pub struct CompileResult {
 /// A compiler error with source location and rustc-style display.
 #[derive(Debug)]
 pub struct CompileError {
-    pub kind:   CompileErrorKind,
-    pub file:   Option<String>,
+    pub kind: CompileErrorKind,
+    pub file: Option<String>,
     pub source: Option<String>,
-    pub span:   Span,
+    pub span: Span,
 }
 
 /// The underlying error from whichever compilation phase failed.
@@ -39,11 +39,11 @@ pub enum CompileErrorKind {
 impl fmt::Display for CompileErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Lex(e)      => write!(f, "{e}"),
-            Self::Parse(e)    => write!(f, "{e}"),
-            Self::Resolve(e)  => write!(f, "{e}"),
+            Self::Lex(e) => write!(f, "{e}"),
+            Self::Parse(e) => write!(f, "{e}"),
+            Self::Resolve(e) => write!(f, "{e}"),
             Self::Semantic(e) => write!(f, "{e}"),
-            Self::Codegen(e)  => write!(f, "{e}"),
+            Self::Codegen(e) => write!(f, "{e}"),
         }
     }
 }
@@ -59,9 +59,9 @@ impl fmt::Display for CompileError {
             }
         }
         if let (Some(src), false) = (&self.source, self.span.is_dummy()) {
-            let line_idx  = self.span.line.saturating_sub(1) as usize;
+            let line_idx = self.span.line.saturating_sub(1) as usize;
             let line_text = src.lines().nth(line_idx).unwrap_or("");
-            let pad       = format!("{}", self.span.line).len();
+            let pad = format!("{}", self.span.line).len();
             writeln!(f, "{:>pad$} |", "")?;
             writeln!(f, "{} | {}", self.span.line, line_text)?;
             let leading = self.span.col.saturating_sub(1) as usize;
@@ -99,9 +99,10 @@ pub fn compile_to_bundle(
     let file = entry.display().to_string();
     let source = std::fs::read_to_string(entry).map_err(|e| CompileError {
         span: Span::dummy(),
-        kind: CompileErrorKind::Resolve(
-            application::services::resolver::ResolveError::Io(file.clone(), e),
-        ),
+        kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(
+            file.clone(),
+            e,
+        )),
         file: Some(file.clone()),
         source: None,
     })?;
@@ -149,9 +150,9 @@ pub fn compile_to_bundle(
 
     let nxb = packager::encode_nxb(&optimized).map_err(|e| CompileError {
         span: Span::dummy(),
-        kind: CompileErrorKind::Codegen(
-            application::services::codegen::CodegenError::Generic(e.to_string()),
-        ),
+        kind: CompileErrorKind::Codegen(application::services::codegen::CodegenError::Generic(
+            e.to_string(),
+        )),
         file: Some(file.clone()),
         source: None,
     })?;
@@ -170,7 +171,11 @@ pub fn compile_to_bundle(
     hasher.update(manifest.as_bytes());
     let signature = format!("{:x}", hasher.finalize());
 
-    Ok(BundleResult { nxb, manifest, signature })
+    Ok(BundleResult {
+        nxb,
+        manifest,
+        signature,
+    })
 }
 
 /// Pipeline commun : lex → parse → resolve → semantic → codegen.
@@ -183,26 +188,32 @@ fn run_pipeline(
     resolver_root: &Path,
 ) -> Result<CompileResult, CompileError> {
     let file = entry.display().to_string();
-    let src  = source.to_string();
+    let src = source.to_string();
 
-    let tokens = application::services::lexer::Lexer::new(source).tokenize().map_err(|e| CompileError {
-        span: e.span(),
-        kind: CompileErrorKind::Lex(e),
-        file: Some(file.clone()),
-        source: Some(src.clone()),
-    })?;
+    let tokens = application::services::lexer::Lexer::new(source)
+        .tokenize()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Lex(e),
+            file: Some(file.clone()),
+            source: Some(src.clone()),
+        })?;
 
-    let program = application::services::parser::Parser::new(tokens).parse().map_err(|e| CompileError {
-        span: e.span(),
-        kind: CompileErrorKind::Parse(e),
-        file: Some(file.clone()),
-        source: Some(src.clone()),
-    })?;
+    let program = application::services::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Parse(e),
+            file: Some(file.clone()),
+            source: Some(src.clone()),
+        })?;
 
     let resolved = application::services::resolver::Resolver::new(
         resolver_root,
         infrastructure::fs_source::FsSourceProvider,
-    ).resolve(&program, entry).map_err(|e| CompileError {
+    )
+    .resolve(&program, entry)
+    .map_err(|e| CompileError {
         span: Span::dummy(),
         kind: CompileErrorKind::Resolve(e),
         file: Some(file.clone()),
@@ -217,12 +228,14 @@ fn run_pipeline(
         source: Some(src.clone()),
     })?;
 
-    application::services::codegen::CodeGenerator::new().generate(&resolved).map_err(|e| CompileError {
-        span: Span::dummy(),
-        kind: CompileErrorKind::Codegen(e),
-        file: Some(file.clone()),
-        source: None,
-    })
+    application::services::codegen::CodeGenerator::new()
+        .generate(&resolved)
+        .map_err(|e| CompileError {
+            span: Span::dummy(),
+            kind: CompileErrorKind::Codegen(e),
+            file: Some(file.clone()),
+            source: None,
+        })
 }
 
 /// Compile un fichier `.nx` standalone, en résolvant les imports
@@ -231,7 +244,10 @@ fn run_pipeline(
 pub fn compile_file(path: &Path) -> Result<CompileResult, CompileError> {
     let source = std::fs::read_to_string(path).map_err(|e| CompileError {
         span: Span::dummy(),
-        kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(path.display().to_string(), e)),
+        kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(
+            path.display().to_string(),
+            e,
+        )),
         file: Some(path.display().to_string()),
         source: None,
     })?;
@@ -243,13 +259,13 @@ pub fn compile_file(path: &Path) -> Result<CompileResult, CompileError> {
 /// `src_root` = `<project>/src/` — racine du Resolver, permet de résoudre
 /// `libs/` en plus de `main/`.
 #[allow(clippy::result_large_err)]
-pub fn compile_project_file(
-    entry: &Path,
-    src_root: &Path,
-) -> Result<CompileResult, CompileError> {
+pub fn compile_project_file(entry: &Path, src_root: &Path) -> Result<CompileResult, CompileError> {
     let source = std::fs::read_to_string(entry).map_err(|e| CompileError {
         span: Span::dummy(),
-        kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(entry.display().to_string(), e)),
+        kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(
+            entry.display().to_string(),
+            e,
+        )),
         file: Some(entry.display().to_string()),
         source: None,
     })?;
@@ -259,19 +275,23 @@ pub fn compile_project_file(
 /// Compile depuis une string (sans résolution d'imports).
 #[allow(clippy::result_large_err)]
 pub fn compile_str(source: &str) -> Result<CompileResult, CompileError> {
-    let tokens = application::services::lexer::Lexer::new(source).tokenize().map_err(|e| CompileError {
-        span: e.span(),
-        kind: CompileErrorKind::Lex(e),
-        file: None,
-        source: Some(source.to_string()),
-    })?;
+    let tokens = application::services::lexer::Lexer::new(source)
+        .tokenize()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Lex(e),
+            file: None,
+            source: Some(source.to_string()),
+        })?;
 
-    let program = application::services::parser::Parser::new(tokens).parse().map_err(|e| CompileError {
-        span: e.span(),
-        kind: CompileErrorKind::Parse(e),
-        file: None,
-        source: Some(source.to_string()),
-    })?;
+    let program = application::services::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Parse(e),
+            file: None,
+            source: Some(source.to_string()),
+        })?;
 
     let mut analyzer = application::services::semantic::SemanticAnalyzer::new();
     analyzer.analyze(&program).map_err(|e| CompileError {
@@ -281,12 +301,14 @@ pub fn compile_str(source: &str) -> Result<CompileResult, CompileError> {
         source: Some(source.to_string()),
     })?;
 
-    application::services::codegen::CodeGenerator::new().generate(&program).map_err(|e| CompileError {
-        span: Span::dummy(),
-        kind: CompileErrorKind::Codegen(e),
-        file: None,
-        source: None,
-    })
+    application::services::codegen::CodeGenerator::new()
+        .generate(&program)
+        .map_err(|e| CompileError {
+            span: Span::dummy(),
+            kind: CompileErrorKind::Codegen(e),
+            file: None,
+            source: None,
+        })
 }
 
 #[cfg(test)]
@@ -307,27 +329,39 @@ mod tests {
     fn compile_str_produces_html_and_js() {
         let result = compile_str(MINIMAL_APP).unwrap();
         assert!(!result.html.is_empty(), "html ne doit pas être vide");
-        assert!(!result.js.is_empty(),   "js ne doit pas être vide");
+        assert!(!result.js.is_empty(), "js ne doit pas être vide");
     }
 
     #[test]
     fn compile_str_html_is_valid_document() {
         let result = compile_str(MINIMAL_APP).unwrap();
-        assert!(result.html.contains("<!DOCTYPE html>"),  "html doit contenir <!DOCTYPE html>");
-        assert!(result.html.contains(r#"id="app""#),      "html doit contenir div#app");
-        assert!(result.html.contains("app.js"),           "html doit charger app.js");
+        assert!(
+            result.html.contains("<!DOCTYPE html>"),
+            "html doit contenir <!DOCTYPE html>"
+        );
+        assert!(
+            result.html.contains(r#"id="app""#),
+            "html doit contenir div#app"
+        );
+        assert!(result.html.contains("app.js"), "html doit charger app.js");
     }
 
     #[test]
     fn compile_str_js_contains_window_class() {
         let result = compile_str(MINIMAL_APP).unwrap();
-        assert!(result.js.contains("HomePage"), "js doit contenir la classe HomePage");
+        assert!(
+            result.js.contains("HomePage"),
+            "js doit contenir la classe HomePage"
+        );
     }
 
     #[test]
     fn compile_str_js_contains_route() {
         let result = compile_str(MINIMAL_APP).unwrap();
-        assert!(result.js.contains(r#"_routes["/"]"#), "js doit contenir la route /");
+        assert!(
+            result.js.contains(r#"_routes["/"]"#),
+            "js doit contenir la route /"
+        );
     }
 
     #[test]

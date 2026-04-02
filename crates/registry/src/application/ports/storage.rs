@@ -2,7 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::{package::{Package, PackageVersion}, user::User};
+use crate::domain::{
+    package::{Package, PackageVersion},
+    user::User,
+};
 
 #[async_trait]
 pub trait UserStore: Send + Sync {

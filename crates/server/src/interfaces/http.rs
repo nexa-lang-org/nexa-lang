@@ -24,32 +24,34 @@ const HMR_SCRIPT: &str = concat!(
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/",      get(serve_html))
+        .route("/", get(serve_html))
         .route("/app.js", get(serve_js))
-        .route("/ws",     get(serve_ws))
+        .route("/ws", get(serve_ws))
         .with_state(state)
 }
 
 async fn serve_html(State(state): State<Arc<AppState>>) -> Html<String> {
     let shared = state.shared.read().await;
     // Inject HMR script just before </body> so the page auto-reloads on save
-    let html = shared.html.replace("</body>", &format!("{HMR_SCRIPT}\n</body>"));
+    let html = shared
+        .html
+        .replace("</body>", &format!("{HMR_SCRIPT}\n</body>"));
     Html(html)
 }
 
 async fn serve_js(State(state): State<Arc<AppState>>) -> Response {
     let shared = state.shared.read().await;
     (
-        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
         shared.js.clone(),
     )
         .into_response()
 }
 
-async fn serve_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> Response {
+async fn serve_ws(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> Response {
     let rx = state.tx.subscribe();
     ws.on_upgrade(|socket| handle_ws(socket, rx))
 }

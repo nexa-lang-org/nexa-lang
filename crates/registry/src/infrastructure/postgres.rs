@@ -41,13 +41,23 @@ struct VersionRow {
 
 impl From<UserRow> for User {
     fn from(r: UserRow) -> Self {
-        User { id: r.id, email: r.email, password_hash: r.password_hash, created_at: r.created_at }
+        User {
+            id: r.id,
+            email: r.email,
+            password_hash: r.password_hash,
+            created_at: r.created_at,
+        }
     }
 }
 
 impl From<PackageRow> for Package {
     fn from(r: PackageRow) -> Self {
-        Package { id: r.id, name: r.name, owner_id: r.owner_id, created_at: r.created_at }
+        Package {
+            id: r.id,
+            name: r.name,
+            owner_id: r.owner_id,
+            created_at: r.created_at,
+        }
     }
 }
 
@@ -72,7 +82,9 @@ pub struct PgUserStore {
 }
 
 impl PgUserStore {
-    pub fn new(pool: PgPool) -> Self { Self { pool } }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
 }
 
 #[async_trait]
@@ -109,7 +121,9 @@ pub struct PgPackageStore {
 }
 
 impl PgPackageStore {
-    pub fn new(pool: PgPool) -> Self { Self { pool } }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
 }
 
 #[async_trait]
@@ -147,8 +161,8 @@ impl PackageStore for PgPackageStore {
         manifest: &str,
         signature: &str,
     ) -> Result<PackageVersion> {
-        let manifest_json: serde_json::Value = serde_json::from_str(manifest)
-            .map_err(|e| anyhow!("invalid manifest: {e}"))?;
+        let manifest_json: serde_json::Value =
+            serde_json::from_str(manifest).map_err(|e| anyhow!("invalid manifest: {e}"))?;
 
         let row = sqlx::query_as::<_, VersionRow>(
             "INSERT INTO package_versions (package_id, version, bundle, manifest, signature)
@@ -217,7 +231,7 @@ impl PackageStore for PgPackageStore {
 
     async fn search(&self, q: &str, page: i64, per_page: i64) -> Result<Vec<Package>> {
         let pattern = format!("%{q}%");
-        let offset  = (page - 1).max(0) * per_page;
+        let offset = (page - 1).max(0) * per_page;
         let rows = sqlx::query_as::<_, PackageRow>(
             "SELECT id, name, owner_id, created_at FROM packages
              WHERE name ILIKE $1

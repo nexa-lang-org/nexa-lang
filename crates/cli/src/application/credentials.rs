@@ -32,6 +32,9 @@ pub fn save(registry: &str, token: &str) {
     };
     let json = serde_json::to_string_pretty(&creds).expect("serialize credentials");
     fs::write(&path, json).unwrap_or_else(|e| {
-        eprintln!("warning: could not save credentials to {}: {e}", path.display());
+        eprintln!(
+            "warning: could not save credentials to {}: {e}",
+            path.display()
+        );
     });
 }

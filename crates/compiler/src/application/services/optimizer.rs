@@ -92,10 +92,14 @@ fn collect_decl_names(decl: &Declaration, out: &mut HashSet<String>) {
 
 fn collect_type_names(ty: &Type, out: &mut HashSet<String>) {
     match ty {
-        Type::Custom(n) | Type::Generic(n) => { out.insert(n.clone()); }
+        Type::Custom(n) | Type::Generic(n) => {
+            out.insert(n.clone());
+        }
         Type::List(inner) => collect_type_names(inner, out),
         Type::Function(params, ret) => {
-            for p in params { collect_type_names(p, out); }
+            for p in params {
+                collect_type_names(p, out);
+            }
             collect_type_names(ret, out);
         }
         _ => {}
@@ -112,22 +116,36 @@ fn collect_stmt_names(stmt: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::Let { init, ty, .. } => {
             collect_expr_names(init, out);
-            if let Some(t) = ty { collect_type_names(t, out); }
+            if let Some(t) = ty {
+                collect_type_names(t, out);
+            }
         }
-        Stmt::If { cond, then_body, else_body } => {
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             collect_expr_names(cond, out);
-            for s in then_body { collect_stmt_names(s, out); }
+            for s in then_body {
+                collect_stmt_names(s, out);
+            }
             if let Some(eb) = else_body {
-                for s in eb { collect_stmt_names(s, out); }
+                for s in eb {
+                    collect_stmt_names(s, out);
+                }
             }
         }
         Stmt::While { cond, body } => {
             collect_expr_names(cond, out);
-            for s in body { collect_stmt_names(s, out); }
+            for s in body {
+                collect_stmt_names(s, out);
+            }
         }
         Stmt::For { iter, body, .. } => {
             collect_expr_names(iter, out);
-            for s in body { collect_stmt_names(s, out); }
+            for s in body {
+                collect_stmt_names(s, out);
+            }
         }
         Stmt::Break | Stmt::Continue => {}
         Stmt::Expr(e) => collect_expr_names(e, out),
@@ -138,19 +156,27 @@ fn collect_expr_names(expr: &Expr, out: &mut HashSet<String>) {
     match expr {
         Expr::Call { callee, args } => {
             out.insert(callee.clone());
-            for a in args { collect_expr_names(a, out); }
+            for a in args {
+                collect_expr_names(a, out);
+            }
         }
         Expr::Block { tag, children } => {
             out.insert(tag.clone());
-            for c in children { collect_expr_names(c, out); }
+            for c in children {
+                collect_expr_names(c, out);
+            }
         }
         Expr::FieldAccess(e, _) => collect_expr_names(e, out),
         Expr::MethodCall { receiver, args, .. } => {
             collect_expr_names(receiver, out);
-            for a in args { collect_expr_names(a, out); }
+            for a in args {
+                collect_expr_names(a, out);
+            }
         }
         Expr::Lambda { params, body } => {
-            for p in params { collect_type_names(&p.ty, out); }
+            for p in params {
+                collect_type_names(&p.ty, out);
+            }
             collect_expr_names(body, out);
         }
         Expr::Binary { left, right, .. } => {
@@ -192,12 +218,16 @@ fn inline_components(mut program: Program) -> Program {
                 continue; // skip the component itself
             }
             for method in &mut c.methods {
-                method.body = method.body.drain(..)
+                method.body = method
+                    .body
+                    .drain(..)
                     .map(|s| inline_stmt(s, &inlinable))
                     .collect();
             }
             if let Some(ctor) = &mut c.constructor {
-                ctor.body = ctor.body.drain(..)
+                ctor.body = ctor
+                    .body
+                    .drain(..)
                     .map(|s| inline_stmt(s, &inlinable))
                     .collect();
             }
@@ -219,7 +249,11 @@ fn inline_components(mut program: Program) -> Program {
 fn inline_stmt(stmt: Stmt, map: &HashMap<String, Vec<Stmt>>) -> Stmt {
     match stmt {
         Stmt::Return(Some(e)) => Stmt::Return(Some(inline_expr(e, map))),
-        Stmt::Assign { object, field, value } => Stmt::Assign {
+        Stmt::Assign {
+            object,
+            field,
+            value,
+        } => Stmt::Assign {
             object: inline_expr(object, map),
             field,
             value: inline_expr(value, map),
@@ -229,7 +263,11 @@ fn inline_stmt(stmt: Stmt, map: &HashMap<String, Vec<Stmt>>) -> Stmt {
             ty,
             init: inline_expr(init, map),
         },
-        Stmt::If { cond, then_body, else_body } => Stmt::If {
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => Stmt::If {
             cond: inline_expr(cond, map),
             then_body: then_body.into_iter().map(|s| inline_stmt(s, map)).collect(),
             else_body: else_body.map(|b| b.into_iter().map(|s| inline_stmt(s, map)).collect()),
@@ -250,7 +288,10 @@ fn inline_stmt(stmt: Stmt, map: &HashMap<String, Vec<Stmt>>) -> Stmt {
 
 fn inline_expr(expr: Expr, map: &HashMap<String, Vec<Stmt>>) -> Expr {
     match expr {
-        Expr::Call { ref callee, ref args } if args.is_empty() => {
+        Expr::Call {
+            ref callee,
+            ref args,
+        } if args.is_empty() => {
             if let Some(body) = map.get(callee) {
                 // If the render body is a single return, unwrap the expression
                 if body.len() == 1 {
@@ -264,7 +305,11 @@ fn inline_expr(expr: Expr, map: &HashMap<String, Vec<Stmt>>) -> Expr {
         Expr::FieldAccess(inner, field) => {
             Expr::FieldAccess(Box::new(inline_expr(*inner, map)), field)
         }
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
             receiver: Box::new(inline_expr(*receiver, map)),
             method,
             args: args.into_iter().map(|a| inline_expr(a, map)).collect(),
@@ -313,13 +358,25 @@ fn flatten_tree(mut program: Program) -> Program {
 fn flatten_stmt(stmt: Stmt) -> Stmt {
     match stmt {
         Stmt::Return(Some(e)) => Stmt::Return(Some(flatten_expr(e))),
-        Stmt::Assign { object, field, value } => Stmt::Assign {
+        Stmt::Assign {
+            object,
+            field,
+            value,
+        } => Stmt::Assign {
             object: flatten_expr(object),
             field,
             value: flatten_expr(value),
         },
-        Stmt::Let { name, ty, init } => Stmt::Let { name, ty, init: flatten_expr(init) },
-        Stmt::If { cond, then_body, else_body } => Stmt::If {
+        Stmt::Let { name, ty, init } => Stmt::Let {
+            name,
+            ty,
+            init: flatten_expr(init),
+        },
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => Stmt::If {
             cond: flatten_expr(cond),
             then_body: then_body.into_iter().map(flatten_stmt).collect(),
             else_body: else_body.map(|b| b.into_iter().map(flatten_stmt).collect()),
@@ -345,16 +402,27 @@ fn flatten_expr(expr: Expr) -> Expr {
             let children: Vec<Expr> = children.into_iter().map(flatten_expr).collect();
             // If single child is same-tag block, lift its children
             if children.len() == 1 {
-                if let Expr::Block { tag: inner_tag, children: inner_children } = &children[0] {
+                if let Expr::Block {
+                    tag: inner_tag,
+                    children: inner_children,
+                } = &children[0]
+                {
                     if *inner_tag == tag {
-                        return Expr::Block { tag, children: inner_children.clone() };
+                        return Expr::Block {
+                            tag,
+                            children: inner_children.clone(),
+                        };
                     }
                 }
             }
             Expr::Block { tag, children }
         }
         Expr::FieldAccess(e, f) => Expr::FieldAccess(Box::new(flatten_expr(*e)), f),
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
             receiver: Box::new(flatten_expr(*receiver)),
             method,
             args: args.into_iter().map(flatten_expr).collect(),
@@ -399,13 +467,25 @@ fn precompute_props(mut program: Program) -> Program {
 fn fold_stmt(stmt: Stmt) -> Stmt {
     match stmt {
         Stmt::Return(Some(e)) => Stmt::Return(Some(fold_expr(e))),
-        Stmt::Assign { object, field, value } => Stmt::Assign {
+        Stmt::Assign {
+            object,
+            field,
+            value,
+        } => Stmt::Assign {
             object: fold_expr(object),
             field,
             value: fold_expr(value),
         },
-        Stmt::Let { name, ty, init } => Stmt::Let { name, ty, init: fold_expr(init) },
-        Stmt::If { cond, then_body, else_body } => Stmt::If {
+        Stmt::Let { name, ty, init } => Stmt::Let {
+            name,
+            ty,
+            init: fold_expr(init),
+        },
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => Stmt::If {
             cond: fold_expr(cond),
             then_body: then_body.into_iter().map(fold_stmt).collect(),
             else_body: else_body.map(|b| b.into_iter().map(fold_stmt).collect()),
@@ -439,20 +519,31 @@ pub fn fold_expr(expr: Expr) -> Expr {
                     Expr::StringLit(format!("{a}{b}"))
                 }
                 (BinOp::And, Expr::BoolLit(a), Expr::BoolLit(b)) => Expr::BoolLit(*a && *b),
-                (BinOp::Or,  Expr::BoolLit(a), Expr::BoolLit(b)) => Expr::BoolLit(*a || *b),
-                _ => Expr::Binary { op, left: Box::new(left), right: Box::new(right) },
+                (BinOp::Or, Expr::BoolLit(a), Expr::BoolLit(b)) => Expr::BoolLit(*a || *b),
+                _ => Expr::Binary {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
             }
         }
         Expr::Unary { op, expr } => {
             let inner = fold_expr(*expr);
             match (&op, &inner) {
-                (UnOp::Neg, Expr::IntLit(n))  => Expr::IntLit(-n),
+                (UnOp::Neg, Expr::IntLit(n)) => Expr::IntLit(-n),
                 (UnOp::Not, Expr::BoolLit(b)) => Expr::BoolLit(!b),
-                _ => Expr::Unary { op, expr: Box::new(inner) },
+                _ => Expr::Unary {
+                    op,
+                    expr: Box::new(inner),
+                },
             }
         }
         Expr::FieldAccess(e, f) => Expr::FieldAccess(Box::new(fold_expr(*e)), f),
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
             receiver: Box::new(fold_expr(*receiver)),
             method,
             args: args.into_iter().map(fold_expr).collect(),
@@ -502,20 +593,32 @@ mod tests {
 
     #[test]
     fn precompute_neg() {
-        let expr = Expr::Unary { op: UnOp::Neg, expr: Box::new(Expr::IntLit(5)) };
+        let expr = Expr::Unary {
+            op: UnOp::Neg,
+            expr: Box::new(Expr::IntLit(5)),
+        };
         assert!(matches!(fold_expr(expr), Expr::IntLit(-5)));
     }
 
     #[test]
     fn precompute_not() {
-        let expr = Expr::Unary { op: UnOp::Not, expr: Box::new(Expr::BoolLit(true)) };
+        let expr = Expr::Unary {
+            op: UnOp::Not,
+            expr: Box::new(Expr::BoolLit(true)),
+        };
         assert!(matches!(fold_expr(expr), Expr::BoolLit(false)));
     }
 
     #[test]
     fn flatten_nested_same_tag() {
-        let inner = Expr::Block { tag: "Page".into(), children: vec![Expr::IntLit(1)] };
-        let outer = Expr::Block { tag: "Page".into(), children: vec![inner] };
+        let inner = Expr::Block {
+            tag: "Page".into(),
+            children: vec![Expr::IntLit(1)],
+        };
+        let outer = Expr::Block {
+            tag: "Page".into(),
+            children: vec![inner],
+        };
         let result = flatten_expr(outer);
         match result {
             Expr::Block { tag, children } => {
@@ -529,8 +632,14 @@ mod tests {
 
     #[test]
     fn flatten_different_tags_unchanged() {
-        let inner = Expr::Block { tag: "Column".into(), children: vec![Expr::IntLit(1)] };
-        let outer = Expr::Block { tag: "Page".into(), children: vec![inner] };
+        let inner = Expr::Block {
+            tag: "Column".into(),
+            children: vec![Expr::IntLit(1)],
+        };
+        let outer = Expr::Block {
+            tag: "Page".into(),
+            children: vec![inner],
+        };
         let result = flatten_expr(outer);
         match result {
             Expr::Block { tag, children } => {

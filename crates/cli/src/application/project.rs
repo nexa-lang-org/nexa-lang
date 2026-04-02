@@ -137,7 +137,11 @@ impl NexaProject {
             return Err(ProjectError::MissingEntryFile(entry));
         }
 
-        let proj = NexaProject { root, project, compiler };
+        let proj = NexaProject {
+            root,
+            project,
+            compiler,
+        };
         proj.ensure_optional_dirs();
         Ok(proj)
     }
@@ -214,8 +218,14 @@ mod tests {
     fn parse_project_config_with_dependencies() {
         let json = r#"{"name":"a","version":"1","author":"b","main":"m.nx","dependencies":{"my-lib":"^1.0.0","other":"2.0.0"}}"#;
         let cfg = parse_project_config(json).unwrap();
-        assert_eq!(cfg.dependencies.get("my-lib").map(String::as_str), Some("^1.0.0"));
-        assert_eq!(cfg.dependencies.get("other").map(String::as_str), Some("2.0.0"));
+        assert_eq!(
+            cfg.dependencies.get("my-lib").map(String::as_str),
+            Some("^1.0.0")
+        );
+        assert_eq!(
+            cfg.dependencies.get("other").map(String::as_str),
+            Some("2.0.0")
+        );
     }
 
     #[test]
@@ -259,7 +269,7 @@ mod tests {
         let cfg = parse_compiler_config(yaml).unwrap();
         let regs = cfg.all_registries();
         assert_eq!(regs[0].0, "https://priv.reg"); // private first
-        assert_eq!(regs[1].0, "https://pub.reg");  // public second
+        assert_eq!(regs[1].0, "https://pub.reg"); // public second
     }
 
     #[test]
@@ -277,10 +287,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_valid_project(tmp.path());
         let proj = NexaProject::load(tmp.path()).unwrap();
-        assert_eq!(proj.src_root(),   tmp.path().join("src"));
-        assert_eq!(proj.entry_file(), tmp.path().join("src").join("main").join("app.nx"));
-        assert_eq!(proj.dist_dir(),   tmp.path().join("src").join("dist"));
-        assert_eq!(proj.libs_dir(),   tmp.path().join("nexa-libs"));
+        assert_eq!(proj.src_root(), tmp.path().join("src"));
+        assert_eq!(
+            proj.entry_file(),
+            tmp.path().join("src").join("main").join("app.nx")
+        );
+        assert_eq!(proj.dist_dir(), tmp.path().join("src").join("dist"));
+        assert_eq!(proj.libs_dir(), tmp.path().join("nexa-libs"));
     }
 
     #[test]

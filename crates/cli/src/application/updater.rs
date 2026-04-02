@@ -45,10 +45,10 @@ const PLATFORM_ASSET: Option<&str> = Some("nexa-windows-x86_64.zip");
 
 // Fallback — unsupported platform
 #[cfg(not(any(
-    all(target_os = "linux",   target_arch = "x86_64"),
-    all(target_os = "linux",   target_arch = "aarch64"),
-    all(target_os = "macos",   target_arch = "x86_64"),
-    all(target_os = "macos",   target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "aarch64"),
+    all(target_os = "macos", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64"),
     all(target_os = "windows", target_arch = "x86_64"),
 )))]
 const PLATFORM_ASSET: Option<&str> = None;
@@ -163,7 +163,7 @@ fn cache_is_stale(cache: &UpdateCache, channel: &str) -> bool {
 fn fetch_release(channel: &str) -> Result<GithubRelease, String> {
     let url = match channel {
         "snapshot" => format!("{GITHUB_API}/repos/{REPO}/releases/tags/snapshot"),
-        _          => format!("{GITHUB_API}/repos/{REPO}/releases/latest"),
+        _ => format!("{GITHUB_API}/repos/{REPO}/releases/latest"),
     };
 
     let user_agent = format!("nexa-cli/{CURRENT_VERSION}");
@@ -174,10 +174,7 @@ fn fetch_release(channel: &str) -> Result<GithubRelease, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let resp = client
-        .get(&url)
-        .send()
-        .map_err(|e| e.to_string())?;
+    let resp = client.get(&url).send().map_err(|e| e.to_string())?;
 
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
@@ -237,20 +234,20 @@ pub fn check_and_notify(channel: &str) {
         std::thread::spawn(move || {
             if let Some(asset_name) = PLATFORM_ASSET {
                 if let Ok(release) = fetch_release(&channel) {
-                    let new_cache = if let Some(asset) = release.assets.iter()
-                        .find(|a| a.name == asset_name)
+                    let new_cache = if let Some(asset) =
+                        release.assets.iter().find(|a| a.name == asset_name)
                     {
                         let checksum_name = format!("{}.sha256", asset_name);
-                        let checksum_url = release.assets.iter()
+                        let checksum_url = release
+                            .assets
+                            .iter()
                             .find(|a| a.name == checksum_name)
                             .map(|a| a.browser_download_url.clone())
                             .unwrap_or_default();
                         UpdateCache {
                             checked_at: now_secs(),
                             channel: channel.clone(),
-                            latest_version: release.tag_name
-                                .trim_start_matches('v')
-                                .to_string(),
+                            latest_version: release.tag_name.trim_start_matches('v').to_string(),
                             download_url: asset.browser_download_url.clone(),
                             checksum_url,
                         }
@@ -302,13 +299,17 @@ fn verify_sha256(archive: &PathBuf, checksum_file: &PathBuf) -> Result<(), Strin
     let mut buf = [0u8; 65536];
     loop {
         let n = f.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buf[..n]);
     }
     let computed = format!("{:x}", hasher.finalize());
 
     let content = fs::read_to_string(checksum_file).map_err(|e| e.to_string())?;
-    let expected = content.split_whitespace().next()
+    let expected = content
+        .split_whitespace()
+        .next()
         .ok_or("empty checksum file")?;
 
     if computed != expected {
@@ -349,12 +350,11 @@ fn extract_binary(archive: &PathBuf, dest_dir: &Path) -> Result<PathBuf, String>
 
 /// Atomically replace the running binary with `new_binary`.
 fn replace_binary(new_binary: &PathBuf) -> Result<(), String> {
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("cannot locate current executable: {e}"))?;
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("cannot locate current executable: {e}"))?;
 
     // Resolve symlinks so we replace the real file
-    let current_exe = current_exe.canonicalize()
-        .unwrap_or(current_exe);
+    let current_exe = current_exe.canonicalize().unwrap_or(current_exe);
 
     #[cfg(unix)]
     {
@@ -364,18 +364,15 @@ fn replace_binary(new_binary: &PathBuf) -> Result<(), String> {
         // rename() is atomic on Unix (same filesystem)
         let tmp = current_exe.with_extension("nexa-update-tmp");
         fs::copy(new_binary, &tmp).map_err(|e| format!("copy: {e}"))?;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
-        fs::rename(&tmp, &current_exe)
-            .map_err(|e| format!("rename: {e}"))?;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &current_exe).map_err(|e| format!("rename: {e}"))?;
     }
 
     #[cfg(windows)]
     {
         // Windows: can't overwrite a running exe — rename it away first
         let old = current_exe.with_extension("old");
-        fs::rename(&current_exe, &old)
-            .map_err(|e| format!("rename old: {e}"))?;
+        fs::rename(&current_exe, &old).map_err(|e| format!("rename old: {e}"))?;
         if let Err(e) = fs::rename(new_binary, &current_exe) {
             // Try to restore
             let _ = fs::rename(&old, &current_exe);
@@ -389,8 +386,7 @@ fn replace_binary(new_binary: &PathBuf) -> Result<(), String> {
 
 /// Full self-update: download, verify, replace. Called by `nexa update`.
 pub fn perform_update(info: &UpdateInfo) -> Result<(), String> {
-    let asset_name = PLATFORM_ASSET
-        .ok_or("no prebuilt binary for this platform")?;
+    let asset_name = PLATFORM_ASSET.ok_or("no prebuilt binary for this platform")?;
     let checksum_name = format!("{}.sha256", asset_name);
 
     println!("  Downloading nexa {}…", info.version);
@@ -438,9 +434,7 @@ pub fn run_update_command(channel_override: Option<String>) {
         }
     };
 
-    let channel = channel_override
-        .as_deref()
-        .unwrap_or("stable");
+    let channel = channel_override.as_deref().unwrap_or("stable");
 
     println!("\n  Checking for updates (channel: {channel})…");
 
@@ -492,17 +486,17 @@ mod tests {
 
     #[test]
     fn semver_parsing() {
-        assert_eq!(parse_version("v1.2.3"),  Some((1, 2, 3)));
-        assert_eq!(parse_version("0.10.0"),  Some((0, 10, 0)));
+        assert_eq!(parse_version("v1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("0.10.0"), Some((0, 10, 0)));
         assert_eq!(parse_version("v2.0.0-beta.1"), Some((2, 0, 0)));
         assert_eq!(parse_version("invalid"), None);
-        assert_eq!(parse_version(""),        None);
+        assert_eq!(parse_version(""), None);
     }
 
     #[test]
     fn version_comparison() {
-        assert!( is_newer("v0.2.0", "0.1.9"));
-        assert!( is_newer("1.0.0",  "0.99.99"));
+        assert!(is_newer("v0.2.0", "0.1.9"));
+        assert!(is_newer("1.0.0", "0.99.99"));
         assert!(!is_newer("v0.1.0", "0.1.0"));
         assert!(!is_newer("v0.0.9", "0.1.0"));
     }

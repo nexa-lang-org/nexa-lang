@@ -97,18 +97,24 @@ enum Commands {
 pub async fn run() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { name, author, version, no_git } => {
-            commands::init(name, author, version, no_git)
-        }
-        Commands::Run { bundle, project, port, watch } => {
-            commands::run(bundle, project, port, watch).await
-        }
-        Commands::Build { project }             => commands::build(project),
-        Commands::Package { project, output }   => commands::package(project, output),
-        Commands::Register { registry }         => commands::register(registry),
-        Commands::Login { registry }            => commands::login(registry),
+        Commands::Init {
+            name,
+            author,
+            version,
+            no_git,
+        } => commands::init(name, author, version, no_git),
+        Commands::Run {
+            bundle,
+            project,
+            port,
+            watch,
+        } => commands::run(bundle, project, port, watch).await,
+        Commands::Build { project } => commands::build(project),
+        Commands::Package { project, output } => commands::package(project, output),
+        Commands::Register { registry } => commands::register(registry),
+        Commands::Login { registry } => commands::login(registry),
         Commands::Publish { project, registry } => commands::publish(project, registry),
-        Commands::Install { package, project }  => commands::install(package, project),
-        Commands::Update  { channel }           => commands::update(channel),
+        Commands::Install { package, project } => commands::install(package, project),
+        Commands::Update { channel } => commands::update(channel),
     }
 }

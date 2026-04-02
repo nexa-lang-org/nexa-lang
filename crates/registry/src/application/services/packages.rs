@@ -83,16 +83,15 @@ fn extract_manifest_and_sig(bundle: &[u8]) -> Result<(String, String)> {
     let sig_bytes = extract_zip_entry(bundle, "signature.sig")?;
     let manifest = String::from_utf8(manifest_bytes)
         .map_err(|_| anyhow!("manifest.json is not valid UTF-8"))?;
-    let signature = String::from_utf8(sig_bytes)
-        .map_err(|_| anyhow!("signature.sig is not valid UTF-8"))?;
+    let signature =
+        String::from_utf8(sig_bytes).map_err(|_| anyhow!("signature.sig is not valid UTF-8"))?;
     Ok((manifest, signature))
 }
 
 fn extract_zip_entry(bundle: &[u8], name: &str) -> Result<Vec<u8>> {
     use std::io::{Cursor, Read};
     let cursor = Cursor::new(bundle);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| anyhow!("invalid ZIP: {e}"))?;
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| anyhow!("invalid ZIP: {e}"))?;
     let mut entry = archive
         .by_name(name)
         .map_err(|_| anyhow!("bundle missing '{name}'"))?;
@@ -104,8 +103,8 @@ fn extract_zip_entry(bundle: &[u8], name: &str) -> Result<Vec<u8>> {
 }
 
 fn parse_version(manifest: &str) -> Result<String> {
-    let v: serde_json::Value = serde_json::from_str(manifest)
-        .map_err(|e| anyhow!("invalid manifest JSON: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(manifest).map_err(|e| anyhow!("invalid manifest JSON: {e}"))?;
     v["version"]
         .as_str()
         .map(|s| s.to_string())

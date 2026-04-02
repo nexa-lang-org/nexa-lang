@@ -27,10 +27,9 @@ impl Default for MemSourceProvider {
 
 impl SourceProvider for MemSourceProvider {
     fn read_source(&self, path: &Path) -> Result<String, std::io::Error> {
-        self.files
-            .get(path)
-            .cloned()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, path.display().to_string()))
+        self.files.get(path).cloned().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, path.display().to_string())
+        })
     }
 
     fn exists(&self, path: &Path) -> bool {
