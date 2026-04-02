@@ -16,3 +16,9 @@ dist/
 nexa-linux-*
 nexa-macos-*
 nexa-windows-*
+
+# Local deployment guide — contains server IPs and setup notes, never commit
+DEPLOY.md
+
+# Production secrets
+.env

@@ -1,0 +1,116 @@
+name: Deploy Registry
+
+# Triggered on every push to main that touches the registry crate or infra files.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/registry/**'
+      - 'docker-compose.prod.yml'
+      - 'nginx/**'
+      - '.github/workflows/deploy-registry.yml'
+
+  # Allow manual trigger from the Actions UI
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # push to ghcr.io
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/na2sime/nexa-registry
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1 — Build & push the Docker image to ghcr.io
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  build-and-push:
+    name: Build & push Docker image
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: crates/registry/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2 — SSH into the VPS and deploy the new image
+# ─────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (for docker-compose.prod.yml + nginx conf)
+        uses: actions/checkout@v4
+
+      - name: Copy compose + nginx config to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          port:     ${{ secrets.VPS_PORT || 22 }}
+          source:   "docker-compose.prod.yml,nginx/"
+          target:   "/opt/nexa-registry"
+          strip_components: 0
+
+      - name: Pull new image and restart services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          port:     ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            set -e
+            cd /opt/nexa-registry
+
+            # Authenticate with ghcr.io using the deploy token
+            echo "${{ secrets.GHCR_TOKEN }}" | \
+              docker login ghcr.io -u na2sime --password-stdin
+
+            # Pull the freshly-built image
+            docker compose -f docker-compose.prod.yml pull registry
+
+            # Zero-downtime rolling restart of the registry container only
+            docker compose -f docker-compose.prod.yml up -d --no-deps registry
+
+            # Remove dangling images to free disk space
+            docker image prune -f
+
+            echo "Deploy complete — $(date -u '+%Y-%m-%d %H:%M UTC')"
