@@ -111,8 +111,8 @@ pub async fn run() {
                 .with_default_directive(default_directive.parse().expect("valid directive"))
                 .from_env_lossy(),
         )
-        .with_target(cli.verbose)   // affiche le module source seulement en verbose
-        .without_time()             // pas de timestamp pour un CLI
+        .with_target(cli.verbose) // affiche le module source seulement en verbose
+        .without_time() // pas de timestamp pour un CLI
         .init();
 
     match cli.command {

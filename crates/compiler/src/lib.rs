@@ -200,8 +200,7 @@ fn run_pipeline(
     entry: &Path,
     resolver_root: &Path,
 ) -> Result<CompileResult, CompileError> {
-    let _span =
-        tracing::debug_span!("compile_pipeline", entry = %entry.display()).entered();
+    let _span = tracing::debug_span!("compile_pipeline", entry = %entry.display()).entered();
 
     let file = entry.display().to_string();
     let src = source.to_string();
