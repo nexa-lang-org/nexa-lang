@@ -6,9 +6,20 @@ use nexa_registry::{
     interfaces::http::{build_router, AppState},
 };
 use sqlx::postgres::PgPoolOptions;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialise le subscriber tracing.
+    // Niveau par défaut : INFO. Surcharger avec RUST_LOG (ex: RUST_LOG=debug,sqlx=warn).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(tracing::Level::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
+
     dotenvy::dotenv().ok();
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -18,15 +29,14 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("PORT must be a number");
 
+    tracing::info!("Connecting to database…");
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
         .await?;
 
-    // Run migrations
+    tracing::info!("Running database migrations…");
     sqlx::migrate!("./migrations").run(&pool).await?;
-
-    println!("Nexa Registry → http://0.0.0.0:{port}");
 
     let user_store = Arc::new(PgUserStore::new(pool.clone()));
     let package_store = Arc::new(PgPackageStore::new(pool));
@@ -39,6 +49,8 @@ async fn main() -> anyhow::Result<()> {
     let router = build_router(state);
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+
+    tracing::info!(address = %addr, "Nexa Registry listening");
     axum::serve(listener, router.into_make_service()).await?;
     Ok(())
 }

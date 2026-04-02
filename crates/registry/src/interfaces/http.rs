@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 
 use crate::application::services::{auth::AuthService, packages::PackagesService};
 
@@ -23,12 +24,14 @@ pub struct AppState {
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        .route("/health", get(health))
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
         .route("/packages", get(list_packages))
         .route("/packages/:name", get(get_package))
         .route("/packages/:name/publish", post(publish))
         .route("/packages/:name/:version/download", get(download))
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -95,17 +98,33 @@ fn err(status: StatusCode, msg: &str) -> Response {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
+async fn health() -> impl IntoResponse {
+    Json(serde_json::json!({ "status": "ok" }))
+}
+
 async fn register(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Response {
     match state.auth.register(&body.email, &body.password).await {
-        Ok(token) => (StatusCode::CREATED, Json(TokenResponse { token })).into_response(),
-        Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
+        Ok(token) => {
+            tracing::info!(email = %body.email, "User registered");
+            (StatusCode::CREATED, Json(TokenResponse { token })).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(email = %body.email, error = %e, "Registration failed");
+            err(StatusCode::BAD_REQUEST, &e.to_string())
+        }
     }
 }
 
 async fn login(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Response {
     match state.auth.login(&body.email, &body.password).await {
-        Ok(token) => Json(TokenResponse { token }).into_response(),
-        Err(e) => err(StatusCode::UNAUTHORIZED, &e.to_string()),
+        Ok(token) => {
+            tracing::debug!(email = %body.email, "User logged in");
+            Json(TokenResponse { token }).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(email = %body.email, error = %e, "Login failed");
+            err(StatusCode::UNAUTHORIZED, &e.to_string())
+        }
     }
 }
 
@@ -117,11 +136,17 @@ async fn publish(
 ) -> Response {
     let token = match extract_bearer(&headers) {
         Some(t) => t,
-        None => return err(StatusCode::UNAUTHORIZED, "missing Authorization header"),
+        None => {
+            tracing::warn!(package = %name, "Publish rejected: missing token");
+            return err(StatusCode::UNAUTHORIZED, "missing Authorization header");
+        }
     };
     let user_id = match state.auth.verify_token(&token) {
         Ok(id) => id,
-        Err(e) => return err(StatusCode::UNAUTHORIZED, &e.to_string()),
+        Err(e) => {
+            tracing::warn!(package = %name, error = %e, "Publish rejected: invalid token");
+            return err(StatusCode::UNAUTHORIZED, &e.to_string());
+        }
     };
 
     // Read the first multipart field (the .nexa file)
@@ -134,17 +159,29 @@ async fn publish(
         Err(e) => return err(StatusCode::BAD_REQUEST, &format!("multipart error: {e}")),
     };
 
+    let bundle_size = bundle_bytes.len();
     match state.packages.publish(&name, user_id, bundle_bytes).await {
-        Ok(v) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "name": name,
-                "version": v.version,
-                "published_at": v.published_at.to_rfc3339(),
-            })),
-        )
-            .into_response(),
-        Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
+        Ok(v) => {
+            tracing::info!(
+                package = %name,
+                version = %v.version,
+                size_bytes = bundle_size,
+                "Package published"
+            );
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "name": name,
+                    "version": v.version,
+                    "published_at": v.published_at.to_rfc3339(),
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!(package = %name, error = %e, "Publish failed");
+            err(StatusCode::BAD_REQUEST, &e.to_string())
+        }
     }
 }
 

@@ -93,6 +93,14 @@ pub fn compile_to_bundle(
     app_name: &str,
     app_version: &str,
 ) -> Result<BundleResult, CompileError> {
+    let _span = tracing::debug_span!(
+        "compile_to_bundle",
+        entry = %entry.display(),
+        app = app_name,
+        version = app_version,
+    )
+    .entered();
+
     use application::services::{optimizer, packager};
     use sha2::{Digest, Sha256};
 
@@ -108,6 +116,7 @@ pub fn compile_to_bundle(
     })?;
     let src = source.clone();
 
+    tracing::debug!("Lexing");
     let tokens = application::services::lexer::Lexer::new(&source)
         .tokenize()
         .map_err(|e| CompileError {
@@ -117,6 +126,7 @@ pub fn compile_to_bundle(
             source: Some(src.clone()),
         })?;
 
+    tracing::debug!(token_count = tokens.len(), "Parsing");
     let program = application::services::parser::Parser::new(tokens)
         .parse()
         .map_err(|e| CompileError {
@@ -126,6 +136,7 @@ pub fn compile_to_bundle(
             source: Some(src.clone()),
         })?;
 
+    tracing::debug!("Resolving imports");
     let resolved = application::services::resolver::Resolver::new(
         src_root,
         infrastructure::fs_source::FsSourceProvider,
@@ -138,6 +149,7 @@ pub fn compile_to_bundle(
         source: None,
     })?;
 
+    tracing::debug!("Semantic analysis");
     let mut analyzer = application::services::semantic::SemanticAnalyzer::new();
     analyzer.analyze(&resolved).map_err(|e| CompileError {
         span: e.span(),
@@ -146,6 +158,7 @@ pub fn compile_to_bundle(
         source: Some(src.clone()),
     })?;
 
+    tracing::debug!("Optimizing");
     let optimized = optimizer::optimize(resolved);
 
     let nxb = packager::encode_nxb(&optimized).map_err(|e| CompileError {
@@ -187,6 +200,9 @@ fn run_pipeline(
     entry: &Path,
     resolver_root: &Path,
 ) -> Result<CompileResult, CompileError> {
+    let _span =
+        tracing::debug_span!("compile_pipeline", entry = %entry.display()).entered();
+
     let file = entry.display().to_string();
     let src = source.to_string();
 

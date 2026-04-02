@@ -1,0 +1,67 @@
+{
+  "name": "nexa-lang",
+  "displayName": "Nexa Language Support",
+  "description": "Syntax highlighting, snippets, and language support for the Nexa programming language.",
+  "version": "0.1.0",
+  "publisher": "nexa-lang",
+  "icon": "icons/nexa.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/na2sime/Nexa-lang"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "nexa",
+    "nexa-lang",
+    "nexa language"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "nexa",
+        "aliases": [
+          "Nexa",
+          "nexa"
+        ],
+        "extensions": [
+          ".nexa",
+          ".nx"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/nexa.png",
+          "dark": "./icons/nexa.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nexa",
+        "scopeName": "source.nexa",
+        "path": "./syntaxes/nexa.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "nexa",
+        "path": "./snippets/nexa.json"
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

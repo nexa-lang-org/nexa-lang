@@ -1,0 +1,194 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nexa",
+  "scopeName": "source.nexa",
+  "fileTypes": ["nexa", "nx"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#booleans" },
+    { "include": "#package-import" },
+    { "include": "#app-declaration" },
+    { "include": "#type-declarations" },
+    { "include": "#method-declaration" },
+    { "include": "#variable-declaration" },
+    { "include": "#control-keywords" },
+    { "include": "#storage-keywords" },
+    { "include": "#this-keyword" },
+    { "include": "#builtin-types" },
+    { "include": "#route-declaration" },
+    { "include": "#operators" },
+    { "include": "#function-call" },
+    { "include": "#type-annotation" }
+  ],
+  "repository": {
+
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.nexa",
+          "match": "//.*$"
+        }
+      ]
+    },
+
+    "strings": {
+      "name": "string.quoted.double.nexa",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.nexa",
+          "match": "\\\\[ntr\"\\\\]"
+        },
+        {
+          "name": "invalid.illegal.escape.nexa",
+          "match": "\\\\."
+        }
+      ]
+    },
+
+    "numbers": {
+      "name": "constant.numeric.integer.nexa",
+      "match": "\\b[0-9]+\\b"
+    },
+
+    "booleans": {
+      "name": "constant.language.boolean.nexa",
+      "match": "\\b(true|false)\\b"
+    },
+
+    "package-import": {
+      "patterns": [
+        {
+          "comment": "package com.example.path;",
+          "match": "\\b(package)\\s+([a-zA-Z][a-zA-Z0-9._]*)",
+          "captures": {
+            "1": { "name": "keyword.control.package.nexa" },
+            "2": { "name": "entity.name.namespace.nexa" }
+          }
+        },
+        {
+          "comment": "import com.example.Foo;",
+          "match": "\\b(import)\\s+([a-zA-Z][a-zA-Z0-9._]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.nexa" },
+            "2": { "name": "entity.name.namespace.nexa" }
+          }
+        }
+      ]
+    },
+
+    "app-declaration": {
+      "comment": "app MyApp { ... }",
+      "match": "\\b(app)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.app.nexa" },
+        "2": { "name": "entity.name.type.app.nexa" }
+      }
+    },
+
+    "type-declarations": {
+      "comment": "class Foo, interface IBar, component Btn, window HomePage",
+      "match": "\\b(class|interface|component|window)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.declaration.nexa" },
+        "2": { "name": "entity.name.type.nexa" }
+      }
+    },
+
+    "method-declaration": {
+      "comment": "public greet(name: String) => Void",
+      "match": "\\b(public|private)?\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:<[^>]*>)?\\s*\\([^)]*\\)\\s*(=>)\\s*([A-Za-z_][A-Za-z0-9_<>]*)",
+      "captures": {
+        "1": { "name": "storage.modifier.nexa" },
+        "2": { "name": "entity.name.function.nexa" },
+        "3": { "name": "keyword.operator.arrow.nexa" },
+        "4": { "name": "support.type.nexa" }
+      }
+    },
+
+    "variable-declaration": {
+      "comment": "let x = 1 / let x: Int = 1",
+      "match": "\\b(let)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.let.nexa" },
+        "2": { "name": "variable.other.nexa" }
+      }
+    },
+
+    "control-keywords": {
+      "name": "keyword.control.nexa",
+      "match": "\\b(if|else|for|while|break|continue|return|in)\\b"
+    },
+
+    "storage-keywords": {
+      "comment": "visibility modifiers, constructor, extends, implements",
+      "name": "storage.modifier.nexa",
+      "match": "\\b(public|private|extends|implements|constructor)\\b"
+    },
+
+    "this-keyword": {
+      "name": "variable.language.this.nexa",
+      "match": "\\bthis\\b"
+    },
+
+    "builtin-types": {
+      "name": "support.type.primitive.nexa",
+      "match": "\\b(Int|String|Bool|Void|List)\\b"
+    },
+
+    "route-declaration": {
+      "comment": "route \"/path\" => ComponentName;",
+      "match": "\\b(route)\\s+(\"[^\"]*\")\\s*(=>)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.route.nexa" },
+        "2": { "name": "string.quoted.double.nexa" },
+        "3": { "name": "keyword.operator.arrow.nexa" },
+        "4": { "name": "entity.name.type.nexa" }
+      }
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.nexa",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.nexa",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.arrow.nexa",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.assignment.nexa",
+          "match": "(?<!=|!|<|>)=(?!=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.nexa",
+          "match": "[+\\-*/%]"
+        }
+      ]
+    },
+
+    "function-call": {
+      "comment": "anyFunctionName(...) — highlight the callee name",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:<[^>]*>)?\\s*\\(",
+      "captures": {
+        "1": { "name": "entity.name.function.call.nexa" }
+      }
+    },
+
+    "type-annotation": {
+      "comment": ": TypeName after a colon",
+      "match": ":\\s*([A-Za-z_][A-Za-z0-9_]*)(?:<[^>]*>)?",
+      "captures": {
+        "1": { "name": "support.type.nexa" }
+      }
+    }
+  }
+}

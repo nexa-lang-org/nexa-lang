@@ -22,3 +22,8 @@ DEPLOY.md
 
 # Production secrets
 .env
+
+# VS Code extension build artifacts
+editors/vscode/node_modules/
+editors/vscode/out/
+editors/vscode/*.vsix

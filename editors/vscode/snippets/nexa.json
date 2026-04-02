@@ -1,0 +1,193 @@
+{
+  "Nexa App": {
+    "prefix": "app",
+    "body": [
+      "app ${1:AppName} {",
+      "  server {",
+      "    port: ${2:3000};",
+      "  }",
+      "",
+      "  public window ${3:HomePage} {",
+      "    public render() => Component {",
+      "      return ${4:Page} { ${0} };",
+      "    }",
+      "  }",
+      "",
+      "  route \"/\" => ${3:HomePage};",
+      "}"
+    ],
+    "description": "New Nexa application entry point"
+  },
+
+  "Class": {
+    "prefix": "class",
+    "body": [
+      "public class ${1:ClassName} {",
+      "  constructor(${2}) {",
+      "    ${0}",
+      "  }",
+      "}"
+    ],
+    "description": "New Nexa class"
+  },
+
+  "Class with extends": {
+    "prefix": "classe",
+    "body": [
+      "public class ${1:ClassName} extends ${2:Parent} {",
+      "  constructor(${3}) {",
+      "    ${0}",
+      "  }",
+      "}"
+    ],
+    "description": "New Nexa class with inheritance"
+  },
+
+  "Interface": {
+    "prefix": "interface",
+    "body": [
+      "public interface ${1:IName} {",
+      "  ${2:method}(${3}) => ${4:Void};",
+      "  ${0}",
+      "}"
+    ],
+    "description": "New Nexa interface"
+  },
+
+  "Component": {
+    "prefix": "comp",
+    "body": [
+      "public component ${1:ComponentName} {",
+      "  public render() => Component {",
+      "    return ${2:Container} { ${0} };",
+      "  }",
+      "}"
+    ],
+    "description": "New Nexa UI component"
+  },
+
+  "Window (Page)": {
+    "prefix": "window",
+    "body": [
+      "public window ${1:PageName} {",
+      "  public render() => Component {",
+      "    return ${2:Page} { ${0} };",
+      "  }",
+      "}"
+    ],
+    "description": "New Nexa window/page"
+  },
+
+  "Method": {
+    "prefix": "method",
+    "body": [
+      "public ${1:methodName}(${2:param}: ${3:Type}) => ${4:Void} {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "New Nexa method"
+  },
+
+  "Private Method": {
+    "prefix": "pmethod",
+    "body": [
+      "private ${1:methodName}(${2:param}: ${3:Type}) => ${4:Void} {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "New private Nexa method"
+  },
+
+  "Constructor": {
+    "prefix": "ctor",
+    "body": [
+      "constructor(${1:param}: ${2:Type}) {",
+      "  this.${3:field} = ${1:param};",
+      "  ${0}",
+      "}"
+    ],
+    "description": "Nexa constructor"
+  },
+
+  "Let variable": {
+    "prefix": "let",
+    "body": ["let ${1:name} = ${0};"],
+    "description": "Variable declaration"
+  },
+
+  "Let with type": {
+    "prefix": "lett",
+    "body": ["let ${1:name}: ${2:Type} = ${0};"],
+    "description": "Typed variable declaration"
+  },
+
+  "If statement": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "If statement"
+  },
+
+  "If / Else": {
+    "prefix": "ife",
+    "body": [
+      "if (${1:condition}) {",
+      "  ${2}",
+      "} else {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "If / Else statement"
+  },
+
+  "For loop": {
+    "prefix": "for",
+    "body": [
+      "for (${1:item} in ${2:items}) {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "For-in loop"
+  },
+
+  "While loop": {
+    "prefix": "while",
+    "body": [
+      "while (${1:condition}) {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "While loop"
+  },
+
+  "Import": {
+    "prefix": "import",
+    "body": ["import ${0};"],
+    "description": "Import declaration"
+  },
+
+  "Package": {
+    "prefix": "package",
+    "body": ["package ${0};"],
+    "description": "Package declaration"
+  },
+
+  "Route": {
+    "prefix": "route",
+    "body": ["route \"${1:/path}\" => ${0:ComponentName};"],
+    "description": "Route declaration"
+  },
+
+  "Server block": {
+    "prefix": "server",
+    "body": [
+      "server {",
+      "  port: ${1:3000};",
+      "}"
+    ],
+    "description": "Server configuration block"
+  }
+}

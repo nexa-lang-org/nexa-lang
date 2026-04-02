@@ -5,6 +5,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "nexa", about = "Nexa language compiler & dev server", version)]
 struct Cli {
+    /// Active les logs de debug (ou définir RUST_LOG pour un contrôle fin)
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -96,6 +100,21 @@ enum Commands {
 
 pub async fn run() {
     let cli = Cli::parse();
+
+    // Initialise le subscriber tracing.
+    // Par défaut silencieux (WARN) pour ne pas polluer la sortie utilisateur.
+    // -v / --verbose → DEBUG. RUST_LOG prend le dessus si défini.
+    let default_directive = if cli.verbose { "debug" } else { "warn" };
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(default_directive.parse().expect("valid directive"))
+                .from_env_lossy(),
+        )
+        .with_target(cli.verbose)   // affiche le module source seulement en verbose
+        .without_time()             // pas de timestamp pour un CLI
+        .init();
+
     match cli.command {
         Commands::Init {
             name,
