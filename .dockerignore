@@ -1,0 +1,9 @@
+target/
+.git/
+.github/
+editors/
+assets/
+docs/
+*.md
+DEPLOY.md
+.env
