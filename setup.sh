@@ -279,55 +279,129 @@ fi
 _NX_VERSION=$("$_NX_BIN" --version 2>&1 | head -1)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# STEP 4 — PATH configuration
+# STEP 4 — make `nexa` available everywhere
+#
+# Strategy (in order of preference):
+#
+#  a) Symlink into a directory that is ALREADY in $PATH
+#     → nexa works immediately in the current terminal, no action needed
+#
+#  b) Create ~/.nexa/env and source it from shell config files
+#     → nexa works in every future terminal automatically
+#     → one short command activates it in the current session
+#
+# The two steps are independent and complementary.
 # ═════════════════════════════════════════════════════════════════════════════
-_nx_add_to_file() {
-    _nx_atf_file="$1"
-    _nx_atf_line='export PATH="$HOME/.nexa/bin:$PATH"'
-    # Only add if the file exists and the line is not already present
-    if [ -f "$_nx_atf_file" ]; then
-        grep -qF '.nexa/bin' "$_nx_atf_file" 2>/dev/null && return 0
-        printf '\n# Nexa language — added by setup.sh\nexport PATH="$HOME/.nexa/bin:$PATH"\n' \
-            >> "$_nx_atf_file"
-        return 1  # "was added" → caller can print a notice
-    fi
-    return 0
-}
+_nx_say "Configuring environment..."
 
-_NX_PATH_MODIFIED=0
+# ── 4a. Create ~/.nexa/env (sourceable, like ~/.cargo/env) ──────────────────
+#
+#   This file is idempotent: sourcing it multiple times is harmless.
+#   Shell configs will `. ~/.nexa/env` so users only need one line per config.
+#
+_NX_ENV_FILE="$HOME/.nexa/env"
+mkdir -p "$(dirname "$_NX_ENV_FILE")"
+cat > "$_NX_ENV_FILE" << 'ENVEOF'
+#!/usr/bin/env sh
+# Nexa language — source this file to add nexa to your PATH.
+# Added automatically by setup.sh. Safe to source multiple times.
+case ":${PATH}:" in
+    *":${HOME}/.nexa/bin:"*) ;;
+    *) export PATH="${HOME}/.nexa/bin:${PATH}" ;;
+esac
+ENVEOF
+chmod +x "$_NX_ENV_FILE"
+
+# ── 4b. Symlink into an existing PATH directory (current terminal fix) ───────
+#
+#   We try a known priority list. The first candidate that is:
+#     - present in $PATH (confirmed accessible by the shell)
+#     - writable by the current user
+#   gets a symlink:  <dir>/nexa → ~/.nexa/bin/nexa
+#
+#   Why a symlink?  The real binary stays in ~/.nexa/bin so `nexa update`
+#   always knows where to replace it, and the symlink follows automatically.
+#
+_NX_SYMLINK_DIR=""
+_NX_SYMLINK_OK=0
 
 if [ "$MODIFY_PATH" = "1" ]; then
-    _nx_say "Configuring PATH..."
+    for _nx_candidate in \
+        "/usr/local/bin" \
+        "$HOME/.local/bin" \
+        "$HOME/bin" \
+        "/opt/homebrew/bin"
+    do
+        # Is this directory present in the current $PATH?
+        case ":${PATH}:" in
+            *":${_nx_candidate}:"*) ;;   # yes → continue
+            *) continue ;;               # no  → skip
+        esac
 
+        # Is it writable?
+        if [ -w "$_nx_candidate" ] 2>/dev/null; then
+            # Create (or update) the symlink
+            if ln -sf "$_NX_BIN" "$_nx_candidate/nexa" 2>/dev/null; then
+                _NX_SYMLINK_DIR="$_nx_candidate"
+                _NX_SYMLINK_OK=1
+                _nx_info "Symlinked: $_nx_candidate/nexa → $_NX_BIN"
+                break
+            fi
+        fi
+    done
+fi
+
+# ── 4c. Update shell config files ────────────────────────────────────────────
+#
+#   We add a single line — `. "$HOME/.nexa/env"` — to each shell config that
+#   exists.  The env file is idempotent, so re-sourcing is safe.
+#   Idempotency check: skip if the file already mentions .nexa/env.
+#
+_nx_add_source_line() {
+    _nx_asf_file="$1"
+    [ -f "$_nx_asf_file" ] || return 0
+    grep -qF '.nexa/env' "$_nx_asf_file" 2>/dev/null && return 0
+    printf '\n# Nexa language — added by setup.sh\n. "$HOME/.nexa/env"\n' \
+        >> "$_nx_asf_file"
+}
+
+_NX_CONFIGS_UPDATED=0
+
+if [ "$MODIFY_PATH" = "1" ]; then
     # bash
-    for _nx_shell_cfg in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-        if _nx_add_to_file "$_nx_shell_cfg"; then : ; else
-            _nx_info "Added PATH to $_nx_shell_cfg"
-            _NX_PATH_MODIFIED=1
+    for _nx_f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+        if [ -f "$_nx_f" ] && ! grep -qF '.nexa/env' "$_nx_f" 2>/dev/null; then
+            _nx_add_source_line "$_nx_f"
+            _nx_info "Updated $_nx_f"
+            _NX_CONFIGS_UPDATED=1
         fi
     done
 
     # zsh
-    if _nx_add_to_file "$HOME/.zshrc"; then : ; else
-        _nx_info "Added PATH to $HOME/.zshrc"
-        _NX_PATH_MODIFIED=1
+    if [ -f "$HOME/.zshrc" ] && ! grep -qF '.nexa/env' "$HOME/.zshrc" 2>/dev/null; then
+        _nx_add_source_line "$HOME/.zshrc"
+        _nx_info "Updated $HOME/.zshrc"
+        _NX_CONFIGS_UPDATED=1
     fi
 
-    # fish — uses a different syntax
+    # zsh — create .zshrc if it doesn't exist yet (common on fresh macOS)
+    if [ ! -f "$HOME/.zshrc" ] && [ "$(basename "${SHELL:-}")" = "zsh" ]; then
+        printf '# Nexa language — added by setup.sh\n. "$HOME/.nexa/env"\n' \
+            > "$HOME/.zshrc"
+        _nx_info "Created $HOME/.zshrc"
+        _NX_CONFIGS_UPDATED=1
+    fi
+
+    # fish
     _NX_FISH_CFG="$HOME/.config/fish/conf.d/nexa.fish"
-    if command -v fish > /dev/null 2>&1; then
-        if [ ! -f "$_NX_FISH_CFG" ]; then
-            mkdir -p "$(dirname "$_NX_FISH_CFG")"
-            printf '# Nexa language — added by setup.sh\nfish_add_path "$HOME/.nexa/bin"\n' \
-                > "$_NX_FISH_CFG"
-            _nx_info "Created $_NX_FISH_CFG"
-            _NX_PATH_MODIFIED=1
-        fi
+    if command -v fish > /dev/null 2>&1 && [ ! -f "$_NX_FISH_CFG" ]; then
+        mkdir -p "$(dirname "$_NX_FISH_CFG")"
+        printf '# Nexa language — added by setup.sh\nfish_add_path "$HOME/.nexa/bin"\n' \
+            > "$_NX_FISH_CFG"
+        _nx_info "Created $_NX_FISH_CFG"
+        _NX_CONFIGS_UPDATED=1
     fi
 fi
-
-# Update PATH for the current session
-export PATH="$INSTALL_DIR:$PATH"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Done
@@ -335,23 +409,36 @@ export PATH="$INSTALL_DIR:$PATH"
 printf "\n"
 printf "  ${CLR_GREEN}✓${CLR_RESET} ${CLR_BOLD}Nexa installed successfully!${CLR_RESET}\n"
 printf "\n"
-printf "  %-12s %s\n" "Version:"  "$_NX_VERSION"
-printf "  %-12s %s\n" "Channel:"  "$CHANNEL"
-printf "  %-12s %s\n" "Binary:"   "$_NX_BIN"
+printf "  %-14s %s\n" "Version:"   "$_NX_VERSION"
+printf "  %-14s %s\n" "Channel:"   "$CHANNEL"
+printf "  %-14s %s\n" "Binary:"    "$_NX_BIN"
+if [ "$_NX_SYMLINK_OK" = "1" ]; then
+    printf "  %-14s %s\n" "Also linked:" "$_NX_SYMLINK_DIR/nexa"
+fi
 printf "\n"
 
-if [ "$_NX_PATH_MODIFIED" = "1" ]; then
-    printf "  ${CLR_YELLOW}Restart your terminal${CLR_RESET} or run:\n\n"
-    printf "    ${CLR_CYAN}source ~/.bashrc${CLR_RESET}   # bash\n"
-    printf "    ${CLR_CYAN}source ~/.zshrc${CLR_RESET}    # zsh\n"
+if [ "$_NX_SYMLINK_OK" = "1" ]; then
+    # Best case: already in PATH via symlink — works right now
+    printf "  ${CLR_GREEN}✓${CLR_RESET} ${CLR_BOLD}nexa is ready to use in this terminal right now.${CLR_RESET}\n"
     printf "\n"
+    printf "    ${CLR_BOLD}nexa --version${CLR_RESET}\n"
+    printf "    ${CLR_BOLD}nexa init my-app${CLR_RESET}\n"
 else
-    printf "  You can start using Nexa right away:\n\n"
+    # Fallback: needs one command to activate in the current session
+    printf "  ${CLR_YELLOW}One command to activate nexa in this terminal:${CLR_RESET}\n"
+    printf "\n"
+    printf "    ${CLR_CYAN}. \"\$HOME/.nexa/env\"${CLR_RESET}\n"
+    printf "\n"
+    if [ "$_NX_CONFIGS_UPDATED" = "1" ]; then
+        printf "  All future terminals are already configured automatically.\n"
+    fi
+    printf "\n"
+    printf "  Then try:\n"
+    printf "    ${CLR_BOLD}nexa --version${CLR_RESET}\n"
+    printf "    ${CLR_BOLD}nexa init my-app${CLR_RESET}\n"
 fi
 
-printf "    ${CLR_BOLD}nexa --version${CLR_RESET}\n"
-printf "    ${CLR_BOLD}nexa run --help${CLR_RESET}\n"
 printf "\n"
-printf "  Docs  → https://github.com/$NEXA_REPO#readme\n"
+printf "  Docs   → https://github.com/$NEXA_REPO#readme\n"
 printf "  Issues → https://github.com/$NEXA_REPO/issues\n"
 printf "\n"
