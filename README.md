@@ -39,6 +39,7 @@ app App {
 - **Built-in routing** — `route "/" => HomePage` maps URLs to window classes
 - **Integrated dev server** — `nexa run` compiles and serves with live reload
 - **Watch mode** — `nexa run --watch` recompiles and reloads the browser on every save
+- **`.nexa` bundle** — `nexa package` produces a distributable binary bundle (ZIP + AST + signature)
 - **Project structure** — standardized layout enforced by the CLI
 
 ---
@@ -141,6 +142,15 @@ nexa build
 ```
 
 Output: `src/dist/index.html` + `src/dist/app.js`.
+
+### 5. Package for distribution
+
+```bash
+nexa package
+# → Package OK → my-app.nexa
+```
+
+Produces a single distributable file. See [`.nexa` bundle format](#nexa-bundle-format) below.
 
 ---
 
@@ -280,12 +290,65 @@ my-app/
 ## CLI Reference
 
 ```
-nexa run    [--project <dir>] [--port <port>] [--watch]   Compile + start dev server
-nexa build  [--project <dir>]                             Compile to src/dist/
+nexa run     [<bundle.nexa>] [--project <dir>] [--port <port>] [--watch]
+    Compile + start dev server, or serve an existing .nexa bundle directly
+
+nexa build   [--project <dir>]
+    Compile to src/dist/
+
+nexa package [--project <dir>] [--output <file>]
+    Package the project into a distributable .nexa bundle
 ```
 
 `--project` defaults to the current directory.  
-`--watch` enables hot-module reload via WebSocket.
+`--watch` enables hot-module reload via WebSocket.  
+`--output` defaults to `<project-name>.nexa` in the current directory.
+
+---
+
+## `.nexa` Bundle Format
+
+`nexa package` produces a distributable binary bundle analogous to an Android APK or an Electron ASAR — a ZIP archive that can be deployed and run directly without recompiling from source.
+
+```
+my-app.nexa  (ZIP)
+├── app.nxb        ← optimized AST in binary format
+├── manifest.json  ← auto-generated metadata
+└── signature.sig  ← SHA-256 integrity hash
+```
+
+### `app.nxb` — compiled bytecode
+
+The `.nxb` file contains the fully-resolved, semantically-validated, and **optimized** AST serialized in binary format (4-byte magic `NXB\x01` + [bincode](https://github.com/bincode-org/bincode) payload).
+
+Before serialization, the compiler runs four optimization passes over the AST:
+
+| Pass | What it does |
+|------|-------------|
+| **Dead code removal** | Strips declarations unreachable from any route or live reference |
+| **Component inlining** | Inlines trivial zero-field, single-`render` components at their call sites |
+| **Tree flattening** | Collapses redundant nested blocks of the same type (`Page { Page { … } }` → `Page { … }`) |
+| **Constant folding** | Evaluates constant expressions at compile time (`2 + 3` → `5`, `"a" + "b"` → `"ab"`) |
+
+When `nexa run my-app.nexa` is called, the bundle is extracted, the signature is validated, the AST is deserialized, and the `CodeGenerator` produces HTML + JS on the fly — no `.nx` sources needed.
+
+### `manifest.json` — bundle metadata
+
+Auto-generated at package time:
+
+```json
+{
+  "name": "my-app",
+  "version": "0.1.0",
+  "nexa_version": "0.1.0",
+  "nxb_version": 1,
+  "created_at": 1743600000
+}
+```
+
+### `signature.sig` — integrity check
+
+A hex-encoded SHA-256 hash of the concatenated `app.nxb` and `manifest.json` bytes. Verified automatically by `nexa run` before the bundle is loaded.
 
 ---
 
@@ -299,11 +362,12 @@ crates/
 │   ├── domain/          AST nodes, Span value object
 │   ├── application/
 │   │   ├── ports/       SourceProvider trait (filesystem abstraction)
-│   │   └── services/    Lexer, Parser, Resolver, SemanticAnalyzer, CodeGenerator
+│   │   └── services/    Lexer, Parser, Resolver, SemanticAnalyzer,
+│   │                    Optimizer, Packager, CodeGenerator
 │   └── infrastructure/  FsSourceProvider (prod), MemSourceProvider (tests)
 │
 ├── cli/
-│   ├── application/     NexaProject config loading, build/run/watch commands
+│   ├── application/     NexaProject config loading, build/run/package commands
 │   └── interfaces/      Clap CLI definition (Cli, Commands)
 │
 └── server/
@@ -317,19 +381,27 @@ crates/
 .nx source
     │
     ▼
-Lexer           tokenise source into a flat token stream
+Lexer            tokenise source into a flat token stream
     │
     ▼
-Parser          build a typed AST (Program, ClassDecl, Expr, …)
+Parser           build a typed AST (Program, ClassDecl, Expr, …)
     │
     ▼
-Resolver        load imported .nx files, merge declarations, detect cycles
+Resolver         load imported .nx files, merge declarations, detect cycles
     │
     ▼
 SemanticAnalyzer check types, undefined references, route targets
     │
-    ▼
-CodeGenerator   emit index.html + app.js
+    ├── nexa build / nexa run
+    │       ▼
+    │   CodeGenerator   emit index.html + app.js
+    │
+    └── nexa package
+            ▼
+        Optimizer        dead code removal → inlining → flattening → constant folding
+            │
+            ▼
+        Packager         serialize AST to app.nxb, generate manifest, sign
 ```
 
 ---
@@ -346,6 +418,8 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 - [x] Watch mode (`nexa run --watch`) with HMR via WebSocket
 - [x] Error spans with rustc-style source locations
 - [x] Clean Architecture (domain / application / infrastructure / interfaces)
+- [x] `.nexa` bundle format (NXB bytecode + manifest + SHA-256 signature)
+- [x] Optimizer pipeline (dead code removal, inlining, flattening, constant folding)
 - [ ] Dependency resolution via `dependencies` in `project.json`
 - [ ] Unit test runner (`nexa test`)
 - [ ] Standard library (`std/`)
