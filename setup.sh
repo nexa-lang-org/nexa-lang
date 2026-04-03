@@ -191,6 +191,8 @@ if [ -n "$_NX_EXISTING_VERSION" ] && [ "$FORCE" = "0" ]; then
     _nx_info "Found existing installation: $_NX_EXISTING_VERSION"
     if [ "$CHANNEL" = "stable" ] || [ "$CHANNEL" = "latest" ]; then
         _nx_info "Use --force to reinstall, or --channel snapshot for dev builds."
+        printf "\n"
+        exit 0
     fi
 fi
 
@@ -262,6 +264,7 @@ if [ "$_NX_PREBUILT_OK" = "0" ]; then
         --path "$_NX_TMP/nexa-src/crates/cli" \
         --root "$(dirname "$INSTALL_DIR")" \
         --locked \
+        --force \
         --quiet \
         || _nx_err "compilation failed — check the output above for details"
 fi
