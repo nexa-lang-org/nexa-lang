@@ -84,7 +84,11 @@ pub struct BundleResult {
     pub signature: String,
 }
 
-/// Compile a project to a `.nexa` bundle (NXB AST + manifest + signature).
+/// Compile a project to a distributable `.nexa` bundle.
+///
+/// The bundle contains a binary NXB file (optimized AST), a `manifest.json`, and a
+/// SHA-256 signature that the CLI verifies before installation.
+///
 /// Pipeline: Lexer → Parser → Resolver → SemanticAnalyzer → Optimizer → NXB encode.
 #[allow(clippy::result_large_err)]
 pub fn compile_to_bundle(
@@ -191,9 +195,9 @@ pub fn compile_to_bundle(
     })
 }
 
-/// Pipeline commun : lex → parse → resolve → semantic → codegen.
-/// `entry` est utilisé pour résoudre les imports relatifs au fichier source.
-/// `resolver_root` est la racine de recherche pour les imports de packages.
+/// Common pipeline: lex → parse → resolve → semantic → codegen.
+/// `entry` is used to resolve imports relative to the source file.
+/// `resolver_root` is the search root for package imports.
 #[allow(clippy::result_large_err)]
 fn run_pipeline(
     source: &str,
@@ -253,8 +257,7 @@ fn run_pipeline(
         })
 }
 
-/// Compile un fichier `.nx` standalone, en résolvant les imports
-/// relativement à son répertoire parent.
+/// Compile a standalone `.nx` file, resolving imports relative to its parent directory.
 #[allow(clippy::result_large_err)]
 pub fn compile_file(path: &Path) -> Result<CompileResult, CompileError> {
     let source = std::fs::read_to_string(path).map_err(|e| CompileError {
@@ -270,9 +273,9 @@ pub fn compile_file(path: &Path) -> Result<CompileResult, CompileError> {
     run_pipeline(&source, path, root)
 }
 
-/// Compile un fichier `.nx` dans le contexte d'un projet structuré.
-/// `src_root` = `<project>/src/` — racine du Resolver, permet de résoudre
-/// `libs/` en plus de `main/`.
+/// Compile a `.nx` file in the context of a structured project.
+/// `src_root` = `<project>/src/` — the Resolver root, allowing imports from
+/// both `main/` and `libs/`.
 #[allow(clippy::result_large_err)]
 pub fn compile_project_file(entry: &Path, src_root: &Path) -> Result<CompileResult, CompileError> {
     let source = std::fs::read_to_string(entry).map_err(|e| CompileError {
@@ -287,7 +290,7 @@ pub fn compile_project_file(entry: &Path, src_root: &Path) -> Result<CompileResu
     run_pipeline(&source, entry, src_root)
 }
 
-/// Compile depuis une string (sans résolution d'imports).
+/// Compile from a string (no import resolution).
 #[allow(clippy::result_large_err)]
 pub fn compile_str(source: &str) -> Result<CompileResult, CompileError> {
     let tokens = application::services::lexer::Lexer::new(source)
@@ -343,8 +346,8 @@ mod tests {
     #[test]
     fn compile_str_produces_html_and_js() {
         let result = compile_str(MINIMAL_APP).unwrap();
-        assert!(!result.html.is_empty(), "html ne doit pas être vide");
-        assert!(!result.js.is_empty(), "js ne doit pas être vide");
+        assert!(!result.html.is_empty(), "html must not be empty");
+        assert!(!result.js.is_empty(), "js must not be empty");
     }
 
     #[test]
@@ -352,13 +355,13 @@ mod tests {
         let result = compile_str(MINIMAL_APP).unwrap();
         assert!(
             result.html.contains("<!DOCTYPE html>"),
-            "html doit contenir <!DOCTYPE html>"
+            "html must contain <!DOCTYPE html>"
         );
         assert!(
             result.html.contains(r#"id="app""#),
-            "html doit contenir div#app"
+            "html must contain div#app"
         );
-        assert!(result.html.contains("app.js"), "html doit charger app.js");
+        assert!(result.html.contains("app.js"), "html must load app.js");
     }
 
     #[test]
@@ -366,7 +369,7 @@ mod tests {
         let result = compile_str(MINIMAL_APP).unwrap();
         assert!(
             result.js.contains("HomePage"),
-            "js doit contenir la classe HomePage"
+            "js must contain the HomePage class"
         );
     }
 
@@ -375,13 +378,13 @@ mod tests {
         let result = compile_str(MINIMAL_APP).unwrap();
         assert!(
             result.js.contains(r#"_routes["/"]"#),
-            "js doit contenir la route /"
+            "js must contain the / route"
         );
     }
 
     #[test]
     fn compile_str_syntax_error_returns_err() {
-        assert!(compile_str("app { SYNTAXE INVALIDE !!! }").is_err());
+        assert!(compile_str("app { INVALID SYNTAX !!! }").is_err());
     }
 
     #[test]

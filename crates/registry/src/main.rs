@@ -10,8 +10,8 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialise le subscriber tracing.
-    // Niveau par défaut : INFO. Surcharger avec RUST_LOG (ex: RUST_LOG=debug,sqlx=warn).
+    // Initialise the tracing subscriber.
+    // Default level: INFO. Override with RUST_LOG (e.g. RUST_LOG=debug,sqlx=warn).
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()

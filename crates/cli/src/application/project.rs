@@ -5,65 +5,68 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-// ── Erreurs ───────────────────────────────────────────────────────────────────
+// ── Errors ────────────────────────────────────────────────────────────────────
 
+/// Errors that can occur while loading or validating a Nexa project.
 #[derive(Debug, Error)]
 pub enum ProjectError {
-    #[error("project.json introuvable dans '{0}' — êtes-vous dans un projet Nexa ?")]
+    #[error("project.json not found in '{0}' — are you inside a Nexa project?")]
     MissingProjectJson(PathBuf),
 
-    #[error("nexa-compiler.yaml introuvable dans '{0}'")]
+    #[error("nexa-compiler.yaml not found in '{0}'")]
     MissingCompilerYaml(PathBuf),
 
-    #[error("répertoire src/main/ introuvable dans '{0}'")]
+    #[error("src/main/ directory not found in '{0}'")]
     MissingSrcMain(PathBuf),
 
-    #[error("fichier d'entrée introuvable : '{0}'")]
+    #[error("entry file not found: '{0}'")]
     MissingEntryFile(PathBuf),
 
-    #[error("lecture project.json : {0}")]
+    #[error("failed to read project.json: {0}")]
     ReadProjectJson(#[source] std::io::Error),
 
-    #[error("parse project.json : {0}")]
+    #[error("failed to parse project.json: {0}")]
     ParseProjectJson(#[source] serde_json::Error),
 
-    #[error("lecture nexa-compiler.yaml : {0}")]
+    #[error("failed to read nexa-compiler.yaml: {0}")]
     ReadCompilerYaml(#[source] std::io::Error),
 
-    #[error("parse nexa-compiler.yaml : {0}")]
+    #[error("failed to parse nexa-compiler.yaml: {0}")]
     ParseCompilerYaml(#[source] serde_yaml::Error),
 }
 
-// ── Structs de config ─────────────────────────────────────────────────────────
+// ── Config structs ────────────────────────────────────────────────────────────
 
-/// Désérialisé depuis `project.json`
+/// Deserialized from `project.json` at the project root.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ProjectConfig {
     pub name: String,
     pub version: String,
     pub author: String,
-    /// Nom du fichier d'entrée dans `src/main/`, ex: "app.nx"
+    /// Entry file name inside `src/main/`, e.g. `"app.nx"`.
     pub main: String,
-    /// Dépendances : { "my-lib": "^1.0.0" }
+    /// Package dependencies: `{ "my-lib": "^1.0.0" }`.
     #[serde(default)]
     pub dependencies: HashMap<String, String>,
 }
 
-/// Un registry privé déclaré dans `nexa-compiler.yaml`
+/// A private registry declared in `nexa-compiler.yaml`.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PrivateRegistry {
+    /// Registry base URL.
     pub url: String,
+    /// API key used for authenticated requests.
     pub key: String,
 }
 
-/// Désérialisé depuis `nexa-compiler.yaml`
+/// Deserialized from `nexa-compiler.yaml` at the project root.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct CompilerConfig {
     pub version: String,
-    /// Registry public (défaut : https://registry.nexa-lang.org)
+    /// Public registry URL (default: `https://registry.nexa-lang.org`).
     #[serde(default)]
     pub registry: Option<String>,
-    /// Registries privés avec clé d'API
+    /// Private registries with API keys, tried before the public registry.
     #[serde(default)]
     pub private_registries: Vec<PrivateRegistry>,
 }
@@ -96,20 +99,25 @@ pub struct NexaProject {
     pub compiler: CompilerConfig,
 }
 
-// ── Fonctions de parsing pures (testables indépendamment) ─────────────────────
+// ── Pure parsing functions (independently testable) ──────────────────────────
 
+/// Parse `project.json` content into a [`ProjectConfig`].
 pub fn parse_project_config(text: &str) -> Result<ProjectConfig, ProjectError> {
     serde_json::from_str(text).map_err(ProjectError::ParseProjectJson)
 }
 
+/// Parse `nexa-compiler.yaml` content into a [`CompilerConfig`].
 pub fn parse_compiler_config(text: &str) -> Result<CompilerConfig, ProjectError> {
     serde_yaml::from_str(text).map_err(ProjectError::ParseCompilerYaml)
 }
 
-// ── Implémentation ────────────────────────────────────────────────────────────
+// ── Implementation ────────────────────────────────────────────────────────────
 
 impl NexaProject {
-    /// Charge et valide un projet depuis `dir`.
+    /// Load and validate a Nexa project from `dir`.
+    ///
+    /// Reads `project.json` and `nexa-compiler.yaml`, checks that `src/main/`
+    /// exists, and verifies the declared entry file is present.
     pub fn load(dir: &Path) -> Result<Self, ProjectError> {
         let root = dir.to_path_buf();
 
@@ -146,7 +154,7 @@ impl NexaProject {
         Ok(proj)
     }
 
-    /// Crée silencieusement les répertoires optionnels s'ils n'existent pas encore.
+    /// Silently create optional directories if they do not exist yet.
     fn ensure_optional_dirs(&self) {
         for d in &[
             self.src_root().join(".nexa"),
@@ -157,22 +165,22 @@ impl NexaProject {
         }
     }
 
-    /// `<root>/src/`
+    /// Returns `<root>/src/`.
     pub fn src_root(&self) -> PathBuf {
         self.root.join("src")
     }
 
-    /// `<root>/src/main/<project.main>`
+    /// Returns `<root>/src/main/<project.main>` — the compiler entry point.
     pub fn entry_file(&self) -> PathBuf {
         self.src_root().join("main").join(&self.project.main)
     }
 
-    /// `<root>/src/dist/`
+    /// Returns `<root>/src/dist/` — where compiled output is written.
     pub fn dist_dir(&self) -> PathBuf {
         self.src_root().join("dist")
     }
 
-    /// `<root>/nexa-libs/`
+    /// Returns `<root>/nexa-libs/` — where installed packages are extracted.
     pub fn libs_dir(&self) -> PathBuf {
         self.root.join("nexa-libs")
     }

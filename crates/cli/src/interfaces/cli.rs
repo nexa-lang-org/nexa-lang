@@ -10,7 +10,7 @@ use std::path::PathBuf;
     arg_required_else_help = true
 )]
 struct Cli {
-    /// Active les logs de debug (ou définir RUST_LOG pour un contrôle fin)
+    /// Enable debug logs (or set RUST_LOG for fine-grained control)
     #[arg(short, long, global = true)]
     verbose: bool,
 
@@ -21,149 +21,149 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     // ── Project ───────────────────────────────────────────────────────────────
-    /// Crée un nouveau projet Nexa dans un nouveau répertoire
+    /// Create a new Nexa project in a new directory
     Init {
-        /// Nom du projet (et du répertoire à créer)
+        /// Project name (also used as the directory name)
         #[arg(value_name = "NAME")]
         name: Option<String>,
-        /// Auteur du projet
+        /// Project author
         #[arg(long, value_name = "AUTHOR")]
         author: Option<String>,
-        /// Version initiale (défaut : 0.1.0)
+        /// Initial version (default: 0.1.0)
         #[arg(long, value_name = "VERSION", default_value = "0.1.0")]
         version: String,
-        /// Ne pas initialiser un dépôt git
+        /// Do not initialise a git repository
         #[arg(long)]
         no_git: bool,
     },
 
-    /// Compile le projet et démarre le dev server (accepte aussi un bundle .nexa)
+    /// Compile the project and start the dev server (also accepts a .nexa bundle)
     Run {
-        /// Fichier .nexa à exécuter directement (optionnel)
+        /// .nexa bundle to run directly (optional)
         #[arg(value_name = "BUNDLE")]
         bundle: Option<PathBuf>,
-        /// Répertoire racine du projet (défaut : répertoire courant)
+        /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
-        /// Port du serveur (défaut : 3000)
+        /// Server port (default: 3000)
         #[arg(short, long)]
         port: Option<u16>,
-        /// Recompile et recharge le navigateur à chaque sauvegarde
+        /// Recompile and reload the browser on every save
         #[arg(long)]
         watch: bool,
     },
 
-    /// Compile le projet — écrit la sortie dans <project>/src/dist/
+    /// Compile the project — writes output to <project>/src/dist/
     Build {
-        /// Répertoire racine du projet (défaut : répertoire courant)
+        /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
     },
 
-    /// Empaquète le projet dans un bundle distribuable .nexa
+    /// Package the project into a distributable .nexa bundle
     Package {
-        /// Répertoire racine du projet (défaut : répertoire courant)
+        /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
-        /// Chemin de sortie du fichier .nexa (défaut : <name>.nexa)
+        /// Output path for the .nexa file (default: <name>.nexa)
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
 
     // ── Registry ──────────────────────────────────────────────────────────────
-    /// Crée un compte sur le registry
+    /// Create an account on the registry
     Register {
-        /// URL du registry (défaut : https://registry.nexa-lang.org)
+        /// Registry URL (default: https://registry.nexa-lang.org)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
     },
 
-    /// Connexion au registry
+    /// Log in to the registry
     Login {
-        /// URL du registry (défaut : https://registry.nexa-lang.org)
+        /// Registry URL (default: https://registry.nexa-lang.org)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
     },
 
-    /// Publie le projet sur le registry
+    /// Publish the project to the registry
     Publish {
-        /// Répertoire racine du projet (défaut : répertoire courant)
+        /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
-        /// URL du registry (défaut : credentials ou https://registry.nexa-lang.org)
+        /// Registry URL (default: credentials or https://registry.nexa-lang.org)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
     },
 
-    /// Installe des dépendances depuis le registry
+    /// Install dependencies from the registry
     Install {
-        /// Package à installer, ex: my-lib ou my-lib@1.0.0 (défaut : toutes les deps de project.json)
+        /// Package to install, e.g. my-lib or my-lib@1.0.0 (default: all deps from project.json)
         #[arg(value_name = "PACKAGE")]
         package: Option<String>,
-        /// Répertoire racine du projet (défaut : répertoire courant)
+        /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
     },
 
-    /// Cherche des packages sur le registry
+    /// Search for packages on the registry
     Search {
-        /// Terme de recherche
+        /// Search query
         #[arg(value_name = "QUERY")]
         query: Option<String>,
-        /// URL du registry (défaut : config ou https://registry.nexa-lang.org)
+        /// Registry URL (default: config or https://registry.nexa-lang.org)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
-        /// Nombre de résultats par page (défaut : 20)
+        /// Number of results per page (default: 20)
         #[arg(long, default_value = "20")]
         limit: u32,
     },
 
-    /// Affiche les détails d'un package
+    /// Show details about a package
     Info {
-        /// Nom du package
+        /// Package name
         #[arg(value_name = "PACKAGE")]
         package: String,
-        /// URL du registry
+        /// Registry URL
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
     },
 
     // ── Config ────────────────────────────────────────────────────────────────
-    /// Gère la configuration globale du CLI (~/.nexa/config.json)
+    /// Manage global CLI configuration (~/.nexa/config.json)
     Config {
         #[command(subcommand)]
         action: ConfigAction,
     },
 
     // ── Themes ────────────────────────────────────────────────────────────────
-    /// Gère les thèmes CLI installés dans ~/.nexa/themes/
+    /// Manage CLI themes installed in ~/.nexa/themes/
     Theme {
         #[command(subcommand)]
         action: ThemeAction,
     },
 
     // ── Toolchain ─────────────────────────────────────────────────────────────
-    /// Met à jour le CLI Nexa vers la dernière version
+    /// Update the Nexa CLI to the latest version
     Update {
-        /// Canal de mise à jour (stable | snapshot | latest)
+        /// Update channel (stable | snapshot | latest)
         #[arg(long, value_name = "CHANNEL")]
         channel: Option<String>,
     },
 
-    /// Vérifie que l'environnement Nexa est correctement configuré
+    /// Check that the Nexa environment is correctly set up
     Doctor,
 }
 
 #[derive(Subcommand)]
 enum ConfigAction {
-    /// Affiche toutes les valeurs de configuration
+    /// Show all configuration values
     List,
-    /// Affiche la valeur d'une clé
+    /// Show the value of a key
     Get {
         #[arg(value_name = "KEY")]
         key: String,
     },
-    /// Définit la valeur d'une clé
+    /// Set the value of a key
     Set {
         #[arg(value_name = "KEY")]
         key: String,
@@ -174,17 +174,17 @@ enum ConfigAction {
 
 #[derive(Subcommand)]
 enum ThemeAction {
-    /// Liste les thèmes installés
+    /// List installed themes
     List,
-    /// Télécharge et installe un thème depuis le registry
+    /// Download and install a theme from the registry
     Add {
         #[arg(value_name = "NAME")]
         name: String,
-        /// URL du registry
+        /// Registry URL
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
     },
-    /// Désinstalle un thème
+    /// Uninstall a theme
     Remove {
         #[arg(value_name = "NAME")]
         name: String,
@@ -194,9 +194,9 @@ enum ThemeAction {
 pub async fn run() {
     let cli = Cli::parse();
 
-    // Initialise le subscriber tracing.
-    // Par défaut silencieux (WARN) pour ne pas polluer la sortie utilisateur.
-    // -v / --verbose → DEBUG. RUST_LOG prend le dessus si défini.
+    // Initialise the tracing subscriber.
+    // Silent by default (WARN) to avoid polluting user output.
+    // -v / --verbose → DEBUG. RUST_LOG overrides this if set.
     let default_directive = if cli.verbose { "debug" } else { "warn" };
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -204,8 +204,8 @@ pub async fn run() {
                 .with_default_directive(default_directive.parse().expect("valid directive"))
                 .from_env_lossy(),
         )
-        .with_target(cli.verbose) // affiche le module source seulement en verbose
-        .without_time() // pas de timestamp pour un CLI
+        .with_target(cli.verbose) // show source module only in verbose mode
+        .without_time() // no timestamp for a CLI
         .init();
 
     match cli.command {
