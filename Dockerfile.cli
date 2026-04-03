@@ -35,9 +35,9 @@ RUN mkdir -p \
 RUN cargo build --release -p nexa 2>/dev/null || true
 RUN rm -rf crates/*/src
 
-# Real build — touch CLI sources so Cargo fully recompiles
+# Real build — touch all workspace sources so Cargo rebuilds stale stubs
 COPY crates/ crates/
-RUN find crates/cli/src -name "*.rs" | xargs touch \
+RUN find crates/cli/src crates/compiler/src crates/server/src -name "*.rs" | xargs touch \
  && cargo build --release -p nexa
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
