@@ -1,0 +1,61 @@
+# Official Nexa CLI Docker image
+# Usage:
+#   docker run --rm -v $(pwd):/app ghcr.io/nexa-lang-org/nexa build
+#   docker run --rm -p 3000:3000 -v $(pwd):/app ghcr.io/nexa-lang-org/nexa run
+
+# ── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM rust:slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Copy manifests first so dependency compilation is cached separately
+COPY Cargo.toml Cargo.lock ./
+COPY crates/compiler/Cargo.toml crates/compiler/
+COPY crates/server/Cargo.toml   crates/server/
+COPY crates/cli/Cargo.toml      crates/cli/
+COPY crates/registry/Cargo.toml crates/registry/
+
+# Stub all crate sources so Cargo can compile dependencies without real code.
+# registry has both lib.rs and main.rs — both must be present.
+RUN mkdir -p \
+      crates/compiler/src \
+      crates/server/src \
+      crates/cli/src \
+      crates/registry/src \
+ && echo 'pub fn main(){}' > crates/compiler/src/lib.rs \
+ && echo 'pub fn main(){}' > crates/server/src/lib.rs \
+ && echo 'fn main(){}' > crates/cli/src/main.rs \
+ && echo '' > crates/registry/src/lib.rs \
+ && echo 'fn main(){}' > crates/registry/src/main.rs
+
+RUN cargo build --release -p nexa 2>/dev/null || true
+RUN rm -rf crates/*/src
+
+# Real build — touch CLI sources so Cargo fully recompiles
+COPY crates/ crates/
+RUN find crates/cli/src -name "*.rs" | xargs touch \
+ && cargo build --release -p nexa
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    git \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/nexa /usr/local/bin/nexa
+
+# Run as a non-root user; /app is the project mount point
+RUN useradd --system --create-home --shell /bin/bash nexa
+USER nexa
+WORKDIR /app
+
+ENTRYPOINT ["nexa"]
+CMD ["--help"]

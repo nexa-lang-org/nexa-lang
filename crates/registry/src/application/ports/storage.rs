@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     package::{Package, PackageVersion},
+    token::ApiToken,
     user::User,
 };
 
@@ -11,6 +12,18 @@ use crate::domain::{
 pub trait UserStore: Send + Sync {
     async fn create(&self, email: &str, password_hash: &str) -> Result<User>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
+}
+
+#[async_trait]
+pub trait TokenStore: Send + Sync {
+    /// Persist a new token (only the hash is stored, not the raw value).
+    async fn create(&self, user_id: Uuid, name: &str, token_hash: &str) -> Result<ApiToken>;
+    /// Look up a token by its hash; also bumps `last_used_at`.
+    async fn find_by_hash(&self, token_hash: &str) -> Result<Option<ApiToken>>;
+    /// List all tokens for a user (hashes are not returned to the client).
+    async fn list_for_user(&self, user_id: Uuid) -> Result<Vec<ApiToken>>;
+    /// Delete a token by its id, scoped to the owner.
+    async fn delete(&self, id: Uuid, user_id: Uuid) -> Result<bool>;
 }
 
 #[async_trait]

@@ -18,9 +18,22 @@ fn credentials_path() -> PathBuf {
     PathBuf::from(home).join(".nexa").join("credentials.json")
 }
 
-/// Load saved credentials from `~/.nexa/credentials.json`.
-/// Returns `None` if the file does not exist or cannot be parsed.
+/// Load credentials, with the following priority:
+///
+/// 1. `NEXA_TOKEN` environment variable (used in CI/CD pipelines).
+///    `NEXA_REGISTRY` can optionally override the registry URL.
+/// 2. `~/.nexa/credentials.json` (set by `nexa login`).
+///
+/// Returns `None` if neither source provides a token.
 pub fn load() -> Option<Credentials> {
+    // CI/CD path: prefer env var so pipelines don't need interactive login
+    if let Ok(token) = std::env::var("NEXA_TOKEN") {
+        if !token.is_empty() {
+            let registry = std::env::var("NEXA_REGISTRY")
+                .unwrap_or_else(|_| "https://registry.nexa-lang.org".to_string());
+            return Some(Credentials { registry, token });
+        }
+    }
     let path = credentials_path();
     let text = fs::read_to_string(&path).ok()?;
     serde_json::from_str(&text).ok()

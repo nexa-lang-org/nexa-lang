@@ -118,6 +118,12 @@ enum Commands {
         limit: u32,
     },
 
+    /// Manage permanent API tokens (for CI/CD and scripts)
+    Token {
+        #[command(subcommand)]
+        action: TokenAction,
+    },
+
     /// Show details about a package
     Info {
         /// Package name
@@ -152,6 +158,34 @@ enum Commands {
 
     /// Check that the Nexa environment is correctly set up
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum TokenAction {
+    /// Create a new permanent API token
+    Create {
+        /// A human-readable label for this token
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Registry URL (default: credentials or https://registry.nexa-lang.org)
+        #[arg(long, value_name = "URL")]
+        registry: Option<String>,
+    },
+    /// List all your API tokens
+    List {
+        /// Registry URL
+        #[arg(long, value_name = "URL")]
+        registry: Option<String>,
+    },
+    /// Revoke an API token by its ID
+    Revoke {
+        /// Token ID (from `nexa token list`)
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Registry URL
+        #[arg(long, value_name = "URL")]
+        registry: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -229,6 +263,11 @@ pub async fn run() {
 
         Commands::Register { registry } => commands::register(registry),
         Commands::Login { registry } => commands::login(registry),
+        Commands::Token { action } => match action {
+            TokenAction::Create { name, registry } => commands::token_create(name, registry),
+            TokenAction::List { registry } => commands::token_list(registry),
+            TokenAction::Revoke { id, registry } => commands::token_revoke(id, registry),
+        },
         Commands::Publish { project, registry } => commands::publish(project, registry),
         Commands::Install { package, project } => commands::install(package, project),
 

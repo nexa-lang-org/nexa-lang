@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nexa_registry::{
     application::services::{auth::AuthService, packages::PackagesService},
-    infrastructure::postgres::{PgPackageStore, PgUserStore},
+    infrastructure::postgres::{PgPackageStore, PgTokenStore, PgUserStore},
     interfaces::http::{build_router, AppState},
 };
 use sqlx::postgres::PgPoolOptions;
@@ -39,10 +39,11 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     let user_store = Arc::new(PgUserStore::new(pool.clone()));
+    let token_store = Arc::new(PgTokenStore::new(pool.clone()));
     let package_store = Arc::new(PgPackageStore::new(pool));
 
     let state = AppState {
-        auth: Arc::new(AuthService::new(user_store, jwt_secret)),
+        auth: Arc::new(AuthService::new(user_store, token_store, jwt_secret)),
         packages: Arc::new(PackagesService::new(package_store)),
     };
 

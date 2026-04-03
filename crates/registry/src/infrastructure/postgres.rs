@@ -4,9 +4,10 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::application::ports::storage::{PackageStore, UserStore};
+use crate::application::ports::storage::{PackageStore, TokenStore, UserStore};
 use crate::domain::{
     package::{Package, PackageVersion},
+    token::ApiToken,
     user::User,
 };
 
@@ -71,6 +72,31 @@ impl From<VersionRow> for PackageVersion {
             manifest: r.manifest.to_string(),
             signature: r.signature,
             published_at: r.published_at,
+        }
+    }
+}
+
+// ── Token row ────────────────────────────────────────────────────────────────
+
+#[derive(FromRow)]
+struct TokenRow {
+    id: Uuid,
+    user_id: Uuid,
+    name: String,
+    token_hash: String,
+    created_at: DateTime<Utc>,
+    last_used_at: Option<DateTime<Utc>>,
+}
+
+impl From<TokenRow> for ApiToken {
+    fn from(r: TokenRow) -> Self {
+        ApiToken {
+            id: r.id,
+            user_id: r.user_id,
+            name: r.name,
+            token_hash: r.token_hash,
+            created_at: r.created_at,
+            last_used_at: r.last_used_at,
         }
     }
 }
@@ -245,5 +271,75 @@ impl PackageStore for PgPackageStore {
         .await
         .map_err(|e| anyhow!("search: {e}"))?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+}
+
+// ── TokenStore ───────────────────────────────────────────────────────────────
+
+pub struct PgTokenStore {
+    pool: PgPool,
+}
+
+impl PgTokenStore {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl TokenStore for PgTokenStore {
+    async fn create(&self, user_id: Uuid, name: &str, token_hash: &str) -> Result<ApiToken> {
+        let row = sqlx::query_as::<_, TokenRow>(
+            "INSERT INTO api_tokens (user_id, name, token_hash)
+             VALUES ($1, $2, $3)
+             RETURNING id, user_id, name, token_hash, created_at, last_used_at",
+        )
+        .bind(user_id)
+        .bind(name)
+        .bind(token_hash)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow!("create token: {e}"))?;
+        Ok(row.into())
+    }
+
+    async fn find_by_hash(&self, token_hash: &str) -> Result<Option<ApiToken>> {
+        // Bump last_used_at and return the row in one round-trip.
+        let row = sqlx::query_as::<_, TokenRow>(
+            "UPDATE api_tokens SET last_used_at = NOW()
+             WHERE token_hash = $1
+             RETURNING id, user_id, name, token_hash, created_at, last_used_at",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| anyhow!("find token: {e}"))?;
+        Ok(row.map(Into::into))
+    }
+
+    async fn list_for_user(&self, user_id: Uuid) -> Result<Vec<ApiToken>> {
+        let rows = sqlx::query_as::<_, TokenRow>(
+            "SELECT id, user_id, name, token_hash, created_at, last_used_at
+             FROM api_tokens
+             WHERE user_id = $1
+             ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow!("list tokens: {e}"))?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn delete(&self, id: Uuid, user_id: Uuid) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM api_tokens WHERE id = $1 AND user_id = $2",
+        )
+        .bind(id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| anyhow!("delete token: {e}"))?;
+        Ok(result.rows_affected() > 0)
     }
 }

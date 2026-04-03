@@ -27,6 +27,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
+        .route("/auth/tokens", post(create_token).get(list_tokens))
+        .route("/auth/tokens/:id", axum::routing::delete(revoke_token))
         .route("/packages", get(list_packages))
         .route("/packages/:name", get(get_package))
         .route("/packages/:name/publish", post(publish))
@@ -143,7 +145,7 @@ async fn publish(
             return err(StatusCode::UNAUTHORIZED, "missing Authorization header");
         }
     };
-    let user_id = match state.auth.verify_token(&token) {
+    let user_id = match state.auth.verify_token(&token).await {
         Ok(id) => id,
         Err(e) => {
             tracing::warn!(package = %name, error = %e, "Publish rejected: invalid token");
@@ -371,6 +373,109 @@ async fn ui_package(State(state): State<AppState>, Path(name): Path<String>) -> 
         html,
     )
         .into_response()
+}
+
+// ── API token handlers ────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CreateTokenBody {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct CreatedTokenResponse {
+    id: String,
+    name: String,
+    token: String, // shown only once
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct TokenListItem {
+    id: String,
+    name: String,
+    created_at: String,
+    last_used_at: Option<String>,
+}
+
+async fn create_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateTokenBody>,
+) -> Response {
+    let bearer = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => return err(StatusCode::UNAUTHORIZED, "missing Authorization header"),
+    };
+    let user_id = match state.auth.verify_token(&bearer).await {
+        Ok(id) => id,
+        Err(e) => return err(StatusCode::UNAUTHORIZED, &e.to_string()),
+    };
+    match state.auth.create_api_token(user_id, &body.name).await {
+        Ok((raw, record)) => {
+            tracing::info!(user_id = %user_id, name = %body.name, "API token created");
+            (
+                StatusCode::CREATED,
+                Json(CreatedTokenResponse {
+                    id: record.id.to_string(),
+                    name: record.name,
+                    token: raw,
+                    created_at: record.created_at.to_rfc3339(),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn list_tokens(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let bearer = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => return err(StatusCode::UNAUTHORIZED, "missing Authorization header"),
+    };
+    let user_id = match state.auth.verify_token(&bearer).await {
+        Ok(id) => id,
+        Err(e) => return err(StatusCode::UNAUTHORIZED, &e.to_string()),
+    };
+    match state.auth.list_api_tokens(user_id).await {
+        Ok(tokens) => {
+            let items: Vec<TokenListItem> = tokens
+                .into_iter()
+                .map(|t| TokenListItem {
+                    id: t.id.to_string(),
+                    name: t.name,
+                    created_at: t.created_at.to_rfc3339(),
+                    last_used_at: t.last_used_at.map(|d| d.to_rfc3339()),
+                })
+                .collect();
+            Json(items).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn revoke_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<uuid::Uuid>,
+) -> Response {
+    let bearer = match extract_bearer(&headers) {
+        Some(t) => t,
+        None => return err(StatusCode::UNAUTHORIZED, "missing Authorization header"),
+    };
+    let user_id = match state.auth.verify_token(&bearer).await {
+        Ok(uid) => uid,
+        Err(e) => return err(StatusCode::UNAUTHORIZED, &e.to_string()),
+    };
+    match state.auth.revoke_api_token(id, user_id).await {
+        Ok(true) => {
+            tracing::info!(token_id = %id, user_id = %user_id, "API token revoked");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => err(StatusCode::NOT_FOUND, "token not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
 }
 
 // ── Bundle helpers ────────────────────────────────────────────────────────────
