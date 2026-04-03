@@ -17,8 +17,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// ── compile-time version (from Cargo.toml) ───────────────────────────────────
-pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+// ── compile-time version (set by build.rs, overridable via NEXA_RELEASE_VERSION)
+pub const CURRENT_VERSION: &str = env!("NEXA_BUILD_VERSION");
 const REPO: &str = "na2sime/Nexa-lang";
 const GITHUB_API: &str = "https://api.github.com";
 // Refresh the cached update check at most once every 24 hours

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[command(
     name = "nexa",
     about = "Nexa language toolchain",
-    version,
+    version = env!("NEXA_BUILD_VERSION"),
     arg_required_else_help = true
 )]
 struct Cli {

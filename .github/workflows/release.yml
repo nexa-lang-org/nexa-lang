@@ -72,7 +72,12 @@ jobs:
           restore-keys: release-${{ matrix.target }}-
 
       - name: Build nexa
-        run: cargo build --release --locked --bin nexa --target ${{ matrix.target }}
+        env:
+          # Strip the leading "v" from the tag: v0.2.0 → 0.2.0
+          NEXA_RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          export NEXA_RELEASE_VERSION="${GITHUB_REF_NAME#v}"
+          cargo build --release --locked --bin nexa --target ${{ matrix.target }}
 
       # ── package (Unix) ──────────────────────────────────────────────────────
       - name: Create archive (Unix)
