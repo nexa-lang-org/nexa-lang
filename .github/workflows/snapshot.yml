@@ -81,10 +81,7 @@ jobs:
           restore-keys: snapshot-${{ matrix.target }}-
 
       - name: Build nexa
-        env:
-          # Embed "0.x.y-snapshot.{sha7}" as the version string in the binary.
-          # build.rs reads this and sets NEXA_BUILD_VERSION accordingly.
-          NEXA_RELEASE_VERSION: ${{ format('{0}-snapshot.{1}', '0.1.0', github.sha) }}
+        shell: bash
         run: |
           SHORT_SHA="${GITHUB_SHA:0:7}"
           PKG_VERSION=$(grep -m1 '^version = ' crates/cli/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
