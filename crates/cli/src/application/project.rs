@@ -127,6 +127,20 @@ impl CompilerConfig {
         out.push((public, None));
         out
     }
+
+    /// Returns the list of modules that should be compiled, applying
+    /// `include_modules` / `exclude_modules` filters.
+    #[allow(dead_code)] // will be used by multi-module build
+    pub fn active_modules<'a>(&'a self, all_modules: &'a [String]) -> Vec<&'a str> {
+        if let Some(include) = &self.include_modules {
+            return include.iter().map(String::as_str).collect();
+        }
+        all_modules
+            .iter()
+            .filter(|m| !self.exclude_modules.contains(m))
+            .map(String::as_str)
+            .collect()
+    }
 }
 
 // ── Project ───────────────────────────────────────────────────────────────────
