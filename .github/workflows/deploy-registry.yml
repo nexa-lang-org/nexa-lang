@@ -19,7 +19,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/na2sime/nexa-registry
+  IMAGE_NAME: ghcr.io/nexa-lang-org/nexa-registry
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Job 1 — Build & push the Docker image to ghcr.io
@@ -118,7 +118,7 @@ jobs:
 
             # Authenticate with ghcr.io using the deploy token
             echo "${{ secrets.GHCR_TOKEN }}" | \
-              docker login ghcr.io -u na2sime --password-stdin
+              docker login ghcr.io -u nexa-lang-org --password-stdin
 
             # Pull the freshly-built image
             docker compose -f docker-compose.prod.yml pull registry

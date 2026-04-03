@@ -24,7 +24,7 @@ services:
 
   # ── Registry API ────────────────────────────────────────────────────────────
   registry:
-    image: ghcr.io/na2sime/nexa-registry:latest
+    image: ghcr.io/nexa-lang-org/nexa-registry:latest
     environment:
       DATABASE_URL: postgres://nexa:${DB_PASSWORD}@db:5432/nexa_registry
       JWT_SECRET:   ${JWT_SECRET}
