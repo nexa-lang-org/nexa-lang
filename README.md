@@ -51,7 +51,7 @@ app App {
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf \
-  https://raw.githubusercontent.com/na2sime/Nexa-lang/main/setup.sh | sh
+  https://raw.githubusercontent.com/nexa-lang-org/nexa-lang/main/setup.sh | sh
 ```
 
 The installer:
@@ -60,7 +60,7 @@ The installer:
 - Falls back to building from source if no binary is available (installs Rust via `rustup` automatically)
 - Adds `~/.nexa/bin` to your `PATH`
 
-**Windows:** download `nexa-windows-x86_64.zip` from [Releases](https://github.com/na2sime/Nexa-lang/releases/latest).
+**Windows:** download `nexa-windows-x86_64.zip` from [Releases](https://github.com/nexa-lang-org/nexa-lang/releases/latest).
 
 ### Release channels
 
@@ -83,7 +83,7 @@ curl ... | sh -s -- --version v0.2.0
 Requires [Rust](https://rustup.rs/) 1.75+:
 
 ```bash
-git clone https://github.com/na2sime/Nexa-lang.git
+git clone https://github.com/nexa-lang-org/nexa-lang.git
 cd Nexa-lang
 cargo install --path crates/cli
 ```

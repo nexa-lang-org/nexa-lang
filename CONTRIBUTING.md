@@ -231,7 +231,7 @@ The workflow builds binaries for 5 targets, generates SHA-256 checksums, and pub
 
 ### Snapshot releases
 
-Every push to `main` that touches Rust source automatically builds and updates the rolling `snapshot` pre-release at `https://github.com/na2sime/Nexa-lang/releases/tag/snapshot`.
+Every push to `main` that touches Rust source automatically builds and updates the rolling `snapshot` pre-release at `https://github.com/nexa-lang-org/nexa-lang/releases/tag/snapshot`.
 
 ### Installer script
 

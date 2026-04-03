@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/na2sime/Nexa-lang"><img src="https://img.shields.io/badge/github-na2sime%2FNexa--lang-blue?logo=github" alt="GitHub" /></a>
+  <a href="https://github.com/nexa-lang-org/nexa-lang"><img src="https://img.shields.io/badge/github-na2sime%2FNexa--lang-blue?logo=github" alt="GitHub" /></a>
   <a href="https://registry.nexa-lang.org"><img src="https://img.shields.io/badge/registry-registry.nexa--lang.org-green" alt="Registry" /></a>
   <img src="https://img.shields.io/badge/VS%20Code-%5E1.80.0-blue?logo=visualstudiocode" alt="VS Code" />
   <img src="https://img.shields.io/badge/language-.nexa%20%7C%20.nx-orange" alt="File types" />
@@ -70,7 +70,7 @@ Full grammar coverage for every Nexa construct:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf \
-  https://raw.githubusercontent.com/na2sime/Nexa-lang/main/setup.sh | sh
+  https://raw.githubusercontent.com/nexa-lang-org/nexa-lang/main/setup.sh | sh
 ```
 
 ### Create a project
@@ -166,7 +166,7 @@ This extension has no configurable settings — it activates automatically for `
 
 Found a highlighting bug or want a new snippet?
 
-- Open an issue: [github.com/na2sime/Nexa-lang/issues](https://github.com/na2sime/Nexa-lang/issues)
+- Open an issue: [github.com/nexa-lang-org/nexa-lang/issues](https://github.com/nexa-lang-org/nexa-lang/issues)
 - The grammar lives in [`editors/vscode/syntaxes/nexa.tmLanguage.json`](syntaxes/nexa.tmLanguage.json)
 - Snippets live in [`editors/vscode/snippets/nexa.json`](snippets/nexa.json)
 

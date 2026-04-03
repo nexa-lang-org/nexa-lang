@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl --proto '=https' --tlsv1.2 -sSf \
-#     https://raw.githubusercontent.com/na2sime/Nexa-lang/main/setup.sh | sh
+#     https://raw.githubusercontent.com/nexa-lang-org/nexa-lang/main/setup.sh | sh
 #
 # Options (pass after '--'):
 #   --channel <stable|snapshot|latest>   Release channel  (default: stable)
@@ -21,7 +21,7 @@
 set -eu
 
 # ── repository ──────────────────────────────────────────────────────────────
-NEXA_REPO="na2sime/Nexa-lang"
+NEXA_REPO="nexa-lang-org/nexa-lang"
 NEXA_RELEASES="https://github.com/$NEXA_REPO/releases"
 
 # ── defaults ────────────────────────────────────────────────────────────────

@@ -164,14 +164,14 @@ jobs:
             **One-line install (macOS / Linux):**
             ```sh
             curl --proto '=https' --tlsv1.2 -sSf \
-              https://raw.githubusercontent.com/na2sime/Nexa-lang/main/setup.sh | sh
+              https://raw.githubusercontent.com/nexa-lang-org/nexa-lang/main/setup.sh | sh
             ```
 
             **Windows:** download `nexa-windows-x86_64.zip` below.
 
             ---
 
-            See the [README](https://github.com/na2sime/Nexa-lang#readme) for full documentation.
+            See the [README](https://github.com/nexa-lang-org/nexa-lang#readme) for full documentation.
           files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

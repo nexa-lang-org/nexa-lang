@@ -157,7 +157,7 @@ jobs:
           printf "This is an **unstable pre-release**. For production use the stable channel.\n\n" >> notes.md
           printf "**Install snapshot:**\n\`\`\`sh\n" >> notes.md
           printf "curl --proto '=https' --tlsv1.2 -sSf \\\\\n" >> notes.md
-          printf "  https://raw.githubusercontent.com/na2sime/Nexa-lang/main/setup.sh \\\\\n" >> notes.md
+          printf "  https://raw.githubusercontent.com/nexa-lang-org/nexa-lang/main/setup.sh \\\\\n" >> notes.md
           printf "  | sh -s -- --channel snapshot\n\`\`\`\n" >> notes.md
 
       # Delete ONLY the rolling "snapshot" pre-release + its tag.

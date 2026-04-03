@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ── compile-time version (set by build.rs, overridable via NEXA_RELEASE_VERSION)
 pub const CURRENT_VERSION: &str = env!("NEXA_BUILD_VERSION");
-const REPO: &str = "na2sime/Nexa-lang";
+const REPO: &str = "nexa-lang-org/nexa-lang";
 const GITHUB_API: &str = "https://api.github.com";
 // Refresh the cached update check at most once every 24 hours
 const CACHE_TTL_SECS: u64 = 86_400;
