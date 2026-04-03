@@ -94,10 +94,17 @@ pub struct BundleResult {
 /// SHA-256 signature that the CLI verifies before installation.
 ///
 /// Pipeline: Lexer → Parser → Resolver → SemanticAnalyzer → Optimizer → NXB encode.
+///
+/// - `entry`        — path to the entry `.nx` file
+/// - `src_root`     — `modules/<name>/src/main/` of the module being compiled
+/// - `project_root` — project root (used for `lib/` and cross-module resolution)
+/// - `module_name`  — name of the module being compiled
 #[allow(clippy::result_large_err)]
 pub fn compile_to_bundle(
     entry: &Path,
     src_root: &Path,
+    project_root: &Path,
+    module_name: &str,
     app_name: &str,
     app_version: &str,
 ) -> Result<BundleResult, CompileError> {
@@ -147,6 +154,8 @@ pub fn compile_to_bundle(
     tracing::debug!("Resolving imports");
     let resolved = application::services::resolver::Resolver::new(
         src_root,
+        project_root,
+        module_name,
         infrastructure::fs_source::FsSourceProvider,
     )
     .resolve(&program, entry)
@@ -207,13 +216,13 @@ pub fn compile_to_bundle(
 }
 
 /// Common pipeline: lex → parse → resolve → semantic → codegen.
-/// `entry` is used to resolve imports relative to the source file.
-/// `resolver_root` is the search root for package imports.
 #[allow(clippy::result_large_err)]
 fn run_pipeline(
     source: &str,
     entry: &Path,
-    resolver_root: &Path,
+    src_root: &Path,
+    project_root: &Path,
+    module_name: &str,
 ) -> Result<CompileResult, CompileError> {
     let _span = tracing::debug_span!("compile_pipeline", entry = %entry.display()).entered();
 
@@ -239,7 +248,9 @@ fn run_pipeline(
         })?;
 
     let resolved = application::services::resolver::Resolver::new(
-        resolver_root,
+        src_root,
+        project_root,
+        module_name,
         infrastructure::fs_source::FsSourceProvider,
     )
     .resolve(&program, entry)
@@ -281,14 +292,22 @@ pub fn compile_file(path: &Path) -> Result<CompileResult, CompileError> {
         source: None,
     })?;
     let root = path.parent().unwrap_or(Path::new("."));
-    run_pipeline(&source, path, root)
+    run_pipeline(&source, path, root, Path::new(""), "")
 }
 
-/// Compile a `.nx` file in the context of a structured project.
-/// `src_root` = `<project>/src/` — the Resolver root, allowing imports from
-/// both `main/` and `libs/`.
+/// Compile a `.nx` file in the context of a structured project (module-aware).
+///
+/// - `entry`        — path to the entry `.nx` file
+/// - `src_root`     — `modules/<name>/src/main/` of the module being compiled
+/// - `project_root` — project root (used for `lib/` and cross-module resolution)
+/// - `module_name`  — name of the module being compiled
 #[allow(clippy::result_large_err)]
-pub fn compile_project_file(entry: &Path, src_root: &Path) -> Result<CompileResult, CompileError> {
+pub fn compile_project_file(
+    entry: &Path,
+    src_root: &Path,
+    project_root: &Path,
+    module_name: &str,
+) -> Result<CompileResult, CompileError> {
     let source = std::fs::read_to_string(entry).map_err(|e| CompileError {
         span: Span::dummy(),
         kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(
@@ -298,7 +317,7 @@ pub fn compile_project_file(entry: &Path, src_root: &Path) -> Result<CompileResu
         file: Some(entry.display().to_string()),
         source: None,
     })?;
-    run_pipeline(&source, entry, src_root)
+    run_pipeline(&source, entry, src_root, project_root, module_name)
 }
 
 /// Compile from a string (no import resolution).

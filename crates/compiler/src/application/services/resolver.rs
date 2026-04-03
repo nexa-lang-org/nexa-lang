@@ -27,20 +27,31 @@ pub enum ResolveError {
 }
 
 pub struct Resolver<S: SourceProvider> {
-    /// Root directory for package resolution
+    /// `src/main/` of the module being compiled — base for local imports.
     root: PathBuf,
-    /// Source file provider (real FS or in-memory for tests)
+    /// Project root — used to locate `lib/`, `modules/`, and cross-module imports.
+    project_root: PathBuf,
+    /// Name of the module being compiled — used to locate `modules/<name>/lib/`.
+    module_name: String,
+    /// Source file provider (real FS or in-memory for tests).
     source: S,
-    /// Cache: canonical file path → parsed declarations
+    /// Cache: canonical file path → parsed declarations.
     cache: HashMap<PathBuf, Vec<Declaration>>,
-    /// Cycle detection: currently being loaded
+    /// Cycle detection: currently being loaded.
     loading: HashSet<PathBuf>,
 }
 
 impl<S: SourceProvider> Resolver<S> {
-    pub fn new(root: impl Into<PathBuf>, source: S) -> Self {
+    pub fn new(
+        root: impl Into<PathBuf>,
+        project_root: impl Into<PathBuf>,
+        module_name: impl Into<String>,
+        source: S,
+    ) -> Self {
         Resolver {
             root: root.into(),
+            project_root: project_root.into(),
+            module_name: module_name.into(),
             source,
             cache: HashMap::new(),
             loading: HashSet::new(),
@@ -124,9 +135,10 @@ impl<S: SourceProvider> Resolver<S> {
     ///
     /// Strategy (in order):
     /// 1. Relative to the importing file's directory: `User` → `./User.nx`
-    /// 2. Relative root + all parts as dirs + last.nx
-    /// 3. Project root / all parts as dirs / last.nx
-    /// 4. `<project>/nexa-libs/<pkg-name>@*/src/<Name>.nx` — installed packages
+    /// 2. `src/main/` of the current module (resolver root) + path parts
+    /// 3. `<project>/modules/<current_module>/lib/<pkg>@*/src/<Name>.nx`
+    /// 4. `<project>/lib/<pkg>@*/src/<Name>.nx` — project-level installed packages
+    /// 5. Cross-module: `import core.UI` → `<project>/modules/core/src/main/UI.nx`
     fn resolve_path(
         &self,
         import_path: &str,
@@ -134,14 +146,14 @@ impl<S: SourceProvider> Resolver<S> {
     ) -> Result<PathBuf, ResolveError> {
         let parts: Vec<&str> = import_path.split('.').collect();
 
-        // Try: relative directory / last_part.nx
+        // 1. Relative to importing file's directory: last_part.nx
         let simple = relative_root.join(format!("{}.nx", parts.last().unwrap_or(&"")));
         if self.source.exists(&simple) {
             return Ok(self.source.canonicalize(&simple).unwrap_or(simple));
         }
 
-        // Try: relative root / all parts as dirs / last.nx
-        let mut rel_path = relative_root.to_path_buf();
+        // 2. Resolver root (src/main/) + all parts as path
+        let mut rel_path = self.root.clone();
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
                 rel_path.push(format!("{}.nx", part));
@@ -153,51 +165,71 @@ impl<S: SourceProvider> Resolver<S> {
             return Ok(self.source.canonicalize(&rel_path).unwrap_or(rel_path));
         }
 
-        // Try: project root / all parts as dirs / last.nx
-        let mut pkg_path = self.root.clone();
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                pkg_path.push(format!("{}.nx", part));
-            } else {
-                pkg_path.push(part);
+        // 3. Module-specific lib: <project>/modules/<module>/lib/<pkg>@*/src/<Name>.nx
+        {
+            let module_lib = self
+                .project_root
+                .join("modules")
+                .join(&self.module_name)
+                .join("lib");
+            if let Some(candidate) = find_in_lib(&module_lib, &parts) {
+                return Ok(candidate);
             }
         }
-        if self.source.exists(&pkg_path) {
-            return Ok(self.source.canonicalize(&pkg_path).unwrap_or(pkg_path));
+
+        // 4. Project-level lib: <project>/lib/<pkg>@*/src/<Name>.nx
+        {
+            let project_lib = self.project_root.join("lib");
+            if let Some(candidate) = find_in_lib(&project_lib, &parts) {
+                return Ok(candidate);
+            }
         }
 
-        // Try: <project>/nexa-libs/<pkg-name>@<ver>/src/<Name>.nx
-        // The resolver root is <project>/src/ — so libs are one level up.
-        if let Some(project_root) = self.root.parent() {
-            let libs_dir = project_root.join("nexa-libs");
-            // The first dotted segment is the package name; the last is the file name.
-            let pkg_name = parts[0];
-            let file_name = format!("{}.nx", parts.last().unwrap_or(&""));
-            if let Ok(entries) = std::fs::read_dir(&libs_dir) {
-                for entry in entries.flatten() {
-                    let dir_name = entry.file_name();
-                    let dir_str = dir_name.to_string_lossy();
-                    // Match directories like "my-lib@1.0.0" for import "my-lib.SomeClass"
-                    if dir_str.starts_with(pkg_name) {
-                        let candidate = entry.path().join("src").join(&file_name);
-                        if candidate.exists() {
-                            return Ok(candidate);
-                        }
-                    }
-                }
+        // 5. Cross-module import: first part matches a sibling module name
+        //    e.g. `import core.UI` → <project>/modules/core/src/main/UI.nx
+        if parts.len() >= 2 {
+            let maybe_module = parts[0];
+            let modules_dir = self.project_root.join("modules");
+            let cross_module_src = modules_dir
+                .join(maybe_module)
+                .join("src")
+                .join("main")
+                .join(format!("{}.nx", parts.last().unwrap_or(&"")));
+            if self.source.exists(&cross_module_src) {
+                return Ok(self
+                    .source
+                    .canonicalize(&cross_module_src)
+                    .unwrap_or(cross_module_src));
             }
         }
 
         Err(ResolveError::NotFound(
             import_path.to_string(),
             format!(
-                "tried: {}, {}, {} (and nexa-libs/)",
+                "tried: {}, {} (module lib, project lib, cross-module)",
                 simple.display(),
                 rel_path.display(),
-                pkg_path.display()
             ),
         ))
     }
+}
+
+/// Search `lib_dir/<pkg>@*/src/<last_part>.nx` for an installed package.
+fn find_in_lib(lib_dir: &Path, parts: &[&str]) -> Option<PathBuf> {
+    let pkg_name = parts.first()?;
+    let file_name = format!("{}.nx", parts.last()?);
+    let entries = std::fs::read_dir(lib_dir).ok()?;
+    for entry in entries.flatten() {
+        let dir_name = entry.file_name();
+        let dir_str = dir_name.to_string_lossy();
+        if dir_str.starts_with(pkg_name) {
+            let candidate = entry.path().join("src").join(&file_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -210,8 +242,8 @@ mod tests {
         Parser::new(tokens).parse().unwrap()
     }
 
-    fn parse_entry_path() -> PathBuf {
-        PathBuf::from("/src/main/app.nx")
+    fn make_resolver(root: &str, provider: MemSourceProvider) -> Resolver<MemSourceProvider> {
+        Resolver::new(root, "", "core", provider)
     }
 
     #[test]
@@ -229,8 +261,10 @@ mod tests {
         let decl_count = entry.declarations.len();
 
         let provider = MemSourceProvider::new();
-        let mut resolver = Resolver::new("/src/main", provider);
-        let resolved = resolver.resolve(&entry, &parse_entry_path()).unwrap();
+        let mut resolver = make_resolver("/src/main", provider);
+        let resolved = resolver
+            .resolve(&entry, &PathBuf::from("/src/main/app.nx"))
+            .unwrap();
 
         assert_eq!(resolved.declarations.len(), decl_count);
     }
@@ -254,10 +288,9 @@ app App {
         let entry_path = PathBuf::from("/src/main/app.nx");
 
         let mut provider = MemSourceProvider::new();
-        // The resolver tries relative_root/User.nx first → /src/main/User.nx
         provider.add("/src/main/User.nx", lib_source);
 
-        let mut resolver = Resolver::new("/src/main", provider);
+        let mut resolver = make_resolver("/src/main", provider);
         let resolved = resolver.resolve(&entry, &entry_path).unwrap();
 
         let has_user = resolved
@@ -284,7 +317,7 @@ app App {
 }"#;
         let entry = parse_entry(entry_source);
         let provider = MemSourceProvider::new();
-        let mut resolver = Resolver::new("/src", provider);
+        let mut resolver = make_resolver("/src", provider);
         let err = resolver
             .resolve(&entry, &PathBuf::from("/src/main/app.nx"))
             .unwrap_err();
@@ -309,7 +342,7 @@ app App {
         let mut provider = MemSourceProvider::new();
         provider.add("/src/main/Shared.nx", lib_source);
 
-        let mut resolver = Resolver::new("/src/main", provider);
+        let mut resolver = make_resolver("/src/main", provider);
         let resolved = resolver
             .resolve(&entry, &PathBuf::from("/src/main/app.nx"))
             .unwrap();

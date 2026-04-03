@@ -57,8 +57,12 @@ pub fn init(name: Option<String>, author: Option<String>, version: String, no_gi
             .unwrap_or_else(|| "Unknown".to_string())
     });
 
-    let src_main = root.join("src").join("main");
-    fs::create_dir_all(&src_main)
+    // modules/core/src/main/ and modules/core/src/test/
+    let core_src_main = root.join("modules").join("core").join("src").join("main");
+    let core_src_test = root.join("modules").join("core").join("src").join("test");
+    fs::create_dir_all(&core_src_main)
+        .unwrap_or_else(|e| ui::die(format!("cannot create directory structure: {e}")));
+    fs::create_dir_all(&core_src_test)
         .unwrap_or_else(|e| ui::die(format!("cannot create directory structure: {e}")));
 
     let project_json = format!(
@@ -66,7 +70,7 @@ pub fn init(name: Option<String>, author: Option<String>, version: String, no_gi
   "name": "{name}",
   "version": "{ver}",
   "author": "{author}",
-  "main": "app.nx",
+  "modules": ["core"],
   "dependencies": {{}}
 }}
 "#,
@@ -76,7 +80,22 @@ pub fn init(name: Option<String>, author: Option<String>, version: String, no_gi
     );
     write_file(&root.join("project.json"), &project_json);
 
+    let module_json = r#"{
+  "name": "core",
+  "main": "app.nx",
+  "dependencies": {}
+}
+"#;
+    write_file(
+        &root.join("modules").join("core").join("module.json"),
+        module_json,
+    );
+
     let compiler_yaml = r#"version: "0.1"
+main_module: "core"
+# include_modules:
+#   - core
+# exclude_modules: []
 # registry: "https://registry.nexa-lang.org"
 # private_registries:
 #   - url: "https://corp.registry.example.com"
@@ -105,15 +124,15 @@ app {app} {{
         pkg = project_name.replace('-', "_"),
         app = app_class,
     );
-    write_file(&src_main.join("app.nx"), &app_nx);
+    write_file(&core_src_main.join("app.nx"), &app_nx);
 
     let gitignore = r#"# Nexa compiler output
-dist/
-**/src/dist/
-**/src/.nexa/
+modules/*/src/dist/
+modules/*/src/.nexa/
 
-# Installed packages
-nexa-libs/
+# Installed packages (project-level and module-level)
+lib/
+modules/*/lib/
 
 # Distributable bundles
 *.nexa
@@ -149,7 +168,9 @@ nexa-libs/
     ui::hint("  ├── project.json");
     ui::hint("  ├── nexa-compiler.yaml");
     ui::hint("  ├── .gitignore");
-    ui::hint("  └── src/main/app.nx");
+    ui::hint("  └── modules/core/");
+    ui::hint("      ├── module.json");
+    ui::hint("      └── src/main/app.nx");
     if git_initted {
         ui::hint("      (git repository initialised)");
     }
@@ -163,9 +184,9 @@ nexa-libs/
 
     println!("  Next steps:\n");
     print!("{cd_hint}");
-    println!("  \x1b[1mnexa run\x1b[0m           start the dev server on http://localhost:3000");
-    println!("  \x1b[1mnexa run --watch\x1b[0m   with hot reload");
-    println!("  \x1b[1mnexa build\x1b[0m         compile to src/dist/");
+    println!("  \x1b[1mnexa run\x1b[0m                    start the dev server");
+    println!("  \x1b[1mnexa build\x1b[0m                  compile the main module");
+    println!("  \x1b[1mnexa module add <name>\x1b[0m      add a new module");
     ui::blank();
 }
 
@@ -208,11 +229,20 @@ mod init_tests {
 pub fn build(project_dir: Option<PathBuf>) {
     updater::check_and_notify("stable");
     let proj = load_project(project_dir);
-    let sp = ui::spinner(format!("Compiling {}…", proj.entry_file().display()));
-    match compile_project_file(&proj.entry_file(), &proj.src_root()) {
+    let mod_name = proj.main_module_name().to_string();
+    let sp = ui::spinner(format!("Compiling module '{mod_name}'…"));
+    match compile_project_file(
+        &proj.main_entry(),
+        &proj.main_src_root(),
+        proj.root(),
+        &mod_name,
+    ) {
         Ok(result) => {
-            write_dist(&proj.dist_dir(), result);
-            ui::done(&sp, format!("Build OK  →  {}", proj.dist_dir().display()));
+            write_dist(&proj.dist_dir(&mod_name), result);
+            ui::done(
+                &sp,
+                format!("Build OK  →  {}", proj.dist_dir(&mod_name).display()),
+            );
         }
         Err(e) => ui::fail(&sp, e.to_string()),
     }
@@ -241,14 +271,20 @@ pub async fn run(
     }
 
     let proj = load_project(project_dir);
-    let sp = ui::spinner(format!("Compiling {}…", proj.entry_file().display()));
-    let result = match compile_project_file(&proj.entry_file(), &proj.src_root()) {
+    let mod_name = proj.main_module_name().to_string();
+    let sp = ui::spinner(format!("Compiling module '{mod_name}'…"));
+    let result = match compile_project_file(
+        &proj.main_entry(),
+        &proj.main_src_root(),
+        proj.root(),
+        &mod_name,
+    ) {
         Ok(r) => r,
         Err(e) => ui::fail(&sp, e.to_string()),
     };
     ui::done(&sp, "Compiled");
 
-    let dist = proj.dist_dir();
+    let dist = proj.dist_dir(&mod_name);
     let _ = fs::create_dir_all(&dist);
     let _ = fs::write(dist.join("index.html"), &result.html);
     let _ = fs::write(dist.join("app.js"), &result.js);
@@ -257,7 +293,7 @@ pub async fn run(
     let state = Arc::new(AppState::new(result.html, result.js, port));
 
     if watch {
-        ui::info(format!("Watch mode  →  {}", proj.src_root().display()));
+        ui::info(format!("Watch mode  →  {}", proj.main_src_root().display()));
         let state_clone = state.clone();
         let proj_clone = proj.clone();
         tokio::spawn(async move {
@@ -285,24 +321,32 @@ pub async fn run(
         .unwrap();
 }
 
-pub fn package(project_dir: Option<PathBuf>, output: Option<PathBuf>) {
+pub fn package(
+    project_dir: Option<PathBuf>,
+    module_override: Option<String>,
+    output: Option<PathBuf>,
+) {
     let proj = load_project(project_dir);
+    let mod_name = module_override.unwrap_or_else(|| proj.main_module_name().to_string());
     let app_name = proj.project.name.clone();
     let app_version = proj.project.version.clone();
+    let bundle_name = format!("{app_name}-{mod_name}");
 
-    let sp = ui::spinner(format!("Packaging {app_name} v{app_version}…"));
+    let sp = ui::spinner(format!("Packaging {bundle_name} v{app_version}…"));
 
     let bundle = match compile_to_bundle(
-        &proj.entry_file(),
-        &proj.src_root(),
-        &app_name,
+        &proj.module_entry(&mod_name),
+        &proj.module_src_root(&mod_name),
+        proj.root(),
+        &mod_name,
+        &bundle_name,
         &app_version,
     ) {
         Ok(b) => b,
         Err(e) => ui::fail(&sp, e.to_string()),
     };
 
-    let out_path = output.unwrap_or_else(|| PathBuf::from(format!("{app_name}.nexa")));
+    let out_path = output.unwrap_or_else(|| PathBuf::from(format!("{bundle_name}.nexa")));
     let file = fs::File::create(&out_path)
         .unwrap_or_else(|e| ui::fail(&sp, format!("cannot create {}: {e}", out_path.display())));
 
@@ -320,7 +364,6 @@ pub fn package(project_dir: Option<PathBuf>, output: Option<PathBuf>) {
         .expect("zip: signature.sig");
     zip.write_all(bundle.signature.as_bytes())
         .expect("zip: write sig");
-    // Include entry source so the registry and CLI can display it
     let src_entry = format!("src/{}", bundle.source_filename);
     zip.start_file(&src_entry, opts).expect("zip: src");
     zip.write_all(bundle.source.as_bytes())
@@ -413,7 +456,7 @@ async fn watch_task(state: Arc<AppState>, proj: NexaProject) {
     .unwrap_or_else(|e| ui::die(format!("Watch error: {e}")));
 
     watcher
-        .watch(&proj.src_root(), RecursiveMode::Recursive)
+        .watch(&proj.modules_dir(), RecursiveMode::Recursive)
         .unwrap_or_else(|e| ui::die(format!("Watch error: {e}")));
 
     while let Some(event) = rx.recv().await {
@@ -426,8 +469,14 @@ async fn watch_task(state: Arc<AppState>, proj: NexaProject) {
             continue;
         }
 
+        let mod_name = proj.main_module_name().to_string();
         let sp = ui::spinner("Recompiling…");
-        match compile_project_file(&proj.entry_file(), &proj.src_root()) {
+        match compile_project_file(
+            &proj.main_entry(),
+            &proj.main_src_root(),
+            proj.root(),
+            &mod_name,
+        ) {
             Ok(result) => {
                 state.update(result.html, result.js).await;
                 ui::done(&sp, "Recompiled  →  reload sent");
@@ -616,21 +665,29 @@ pub fn token_revoke(id: String, registry_override: Option<String>) {
     }
 }
 
-pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) {
+pub fn publish(
+    project_dir: Option<PathBuf>,
+    module_override: Option<String>,
+    registry_override: Option<String>,
+) {
     let proj = load_project(project_dir);
+    let mod_name = module_override.unwrap_or_else(|| proj.main_module_name().to_string());
     let app_name = proj.project.name.clone();
     let app_version = proj.project.version.clone();
+    let bundle_name = format!("{app_name}-{mod_name}");
 
     let creds = credentials::load().unwrap_or_else(|| {
         ui::die("not logged in. Run `nexa login` first.");
     });
     let registry = registry_override.unwrap_or(creds.registry.clone());
 
-    let sp = ui::spinner(format!("Packaging {app_name} v{app_version}…"));
+    let sp = ui::spinner(format!("Packaging {bundle_name} v{app_version}…"));
     let bundle = match compile_to_bundle(
-        &proj.entry_file(),
-        &proj.src_root(),
-        &app_name,
+        &proj.module_entry(&mod_name),
+        &proj.module_src_root(&mod_name),
+        proj.root(),
+        &mod_name,
+        &bundle_name,
         &app_version,
     ) {
         Ok(b) => b,
@@ -657,10 +714,10 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
     }
 
     sp.set_message(format!(
-        "Publishing {app_name}@{app_version} to {registry}…"
+        "Publishing {bundle_name}@{app_version} to {registry}…"
     ));
 
-    let url = format!("{registry}/packages/{app_name}/publish");
+    let url = format!("{registry}/packages/{bundle_name}/publish");
     let file_bytes = fs::read(&tmp_path).unwrap_or_else(|e| ui::fail(&sp, e.to_string()));
     let _ = fs::remove_file(&tmp_path);
 
@@ -678,7 +735,7 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
         .send()
     {
         Ok(resp) if resp.status().is_success() => {
-            ui::done(&sp, format!("Published {app_name}@{app_version}"));
+            ui::done(&sp, format!("Published {bundle_name}@{app_version}"));
         }
         Ok(resp) => {
             let body: serde_json::Value = resp.json().unwrap_or_default();
@@ -688,30 +745,52 @@ pub fn publish(project_dir: Option<PathBuf>, registry_override: Option<String>) 
     }
 }
 
-pub fn install(package_arg: Option<String>, project_dir: Option<PathBuf>) {
+pub fn install(
+    package_arg: Option<String>,
+    project_dir: Option<PathBuf>,
+    module_override: Option<String>,
+) {
     let proj = load_project(project_dir);
     let registries = proj.compiler.all_registries();
 
-    let packages_to_install: Vec<(String, String)> = if let Some(arg) = package_arg {
-        if let Some((name, ver)) = arg.split_once('@') {
-            vec![(name.to_string(), ver.to_string())]
+    // Determine which dependency map to read from when installing all deps
+    let (packages_to_install, install_for_module): (Vec<(String, String)>, Option<String>) =
+        if let Some(arg) = package_arg {
+            let pkg = if let Some((name, ver)) = arg.split_once('@') {
+                vec![(name.to_string(), ver.to_string())]
+            } else {
+                vec![(arg, "latest".to_string())]
+            };
+            (pkg, module_override.clone())
         } else {
-            vec![(arg, "latest".to_string())]
-        }
-    } else {
-        proj.project
-            .dependencies
-            .iter()
-            .map(|(name, ver)| (name.clone(), ver.trim_start_matches('^').to_string()))
-            .collect()
-    };
+            // No explicit package — install all deps from the relevant config
+            let deps = if let Some(ref mod_name) = module_override {
+                proj.modules
+                    .get(mod_name.as_str())
+                    .map(|m| &m.dependencies)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                proj.project.dependencies.clone()
+            };
+            let pkgs = deps
+                .iter()
+                .map(|(name, ver)| (name.clone(), ver.trim_start_matches('^').to_string()))
+                .collect();
+            (pkgs, module_override.clone())
+        };
 
     if packages_to_install.is_empty() {
         ui::info("No dependencies to install.");
         return;
     }
 
-    let libs_dir = proj.libs_dir();
+    // Determine target lib directory
+    let libs_dir = if let Some(ref mod_name) = install_for_module {
+        proj.module_lib_dir(mod_name)
+    } else {
+        proj.lib_dir()
+    };
     fs::create_dir_all(&libs_dir)
         .unwrap_or_else(|e| ui::die(format!("cannot create nexa-libs/: {e}")));
 
@@ -754,7 +833,12 @@ pub fn install(package_arg: Option<String>, project_dir: Option<PathBuf>) {
     save_lockfile(&libs_dir, &lock);
 
     // Update project.json dependencies with installed packages
-    update_project_dependencies(proj.root(), &packages_to_install, &lock);
+    update_project_dependencies(
+        proj.root(),
+        install_for_module.as_deref(),
+        &packages_to_install,
+        &lock,
+    );
 
     ui::blank();
     ui::success(format!(
@@ -1161,17 +1245,25 @@ fn save_lockfile(libs_dir: &Path, lock: &Lockfile) {
     });
 }
 
-/// Write installed packages back into `project.json` dependencies.
+/// Write installed packages back into `project.json` or `module.json` dependencies.
 ///
-/// Reads the existing `project.json`, merges the newly resolved versions into
-/// `"dependencies"`, then writes it back. Uses the version from the lockfile
-/// so that `"latest"` requests are pinned to the actual installed version.
+/// If `module_name` is `Some`, updates `modules/<name>/module.json`.
+/// Otherwise updates `project.json`. Pins versions from the lockfile.
 fn update_project_dependencies(
     project_root: &Path,
+    module_name: Option<&str>,
     installed: &[(String, String)],
     lock: &Lockfile,
 ) {
-    let path = project_root.join("project.json");
+    let path = if let Some(mod_name) = module_name {
+        project_root
+            .join("modules")
+            .join(mod_name)
+            .join("module.json")
+    } else {
+        project_root.join("project.json")
+    };
+
     let text = match fs::read_to_string(&path) {
         Ok(t) => t,
         Err(_) => return,
@@ -1187,8 +1279,6 @@ fn update_project_dependencies(
             .or_insert_with(|| serde_json::json!({}));
         if let Some(deps_map) = deps.as_object_mut() {
             for (name, _requested_ver) in installed {
-                // Pin to the version actually recorded in the lockfile
-                // ("latest" input → real resolved version like "1.0.0")
                 let pinned = lock
                     .packages
                     .iter()
@@ -1203,6 +1293,96 @@ fn update_project_dependencies(
     if let Ok(updated) = serde_json::to_string_pretty(&value) {
         let _ = fs::write(&path, updated);
     }
+}
+
+// ── Module commands ───────────────────────────────────────────────────────────
+
+pub fn module_add(name: String, project_dir: Option<PathBuf>) {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        ui::die(format!(
+            "module name '{}' must only contain letters, digits, hyphens or underscores",
+            name
+        ));
+    }
+
+    let proj = load_project(project_dir.clone());
+
+    if proj.project.modules.contains(&name) {
+        ui::die(format!("module '{name}' already exists in this project."));
+    }
+
+    let root = proj.root().to_path_buf();
+    let src_main = root.join("modules").join(&name).join("src").join("main");
+    let src_test = root.join("modules").join(&name).join("src").join("test");
+
+    fs::create_dir_all(&src_main)
+        .unwrap_or_else(|e| ui::die(format!("cannot create directory: {e}")));
+    fs::create_dir_all(&src_test)
+        .unwrap_or_else(|e| ui::die(format!("cannot create directory: {e}")));
+
+    let module_json = format!(
+        r#"{{
+  "name": "{name}",
+  "main": "app.nx",
+  "dependencies": {{}}
+}}
+"#
+    );
+    write_file(
+        &root.join("modules").join(&name).join("module.json"),
+        &module_json,
+    );
+
+    let app_class = to_pascal_case(&name);
+    let app_nx = format!(
+        r#"package {pkg};
+
+app {app} {{
+  server {{ port: 3000; }}
+
+  public window HomePage {{
+    public render() => Component {{
+      return Page {{
+        Heading("Module {app}")
+      }};
+    }}
+  }}
+
+  route "/" => HomePage;
+}}
+"#,
+        pkg = name.replace('-', "_"),
+        app = app_class,
+    );
+    write_file(&src_main.join("app.nx"), &app_nx);
+
+    // Add module to project.json
+    let proj_path = root.join("project.json");
+    if let Ok(text) = fs::read_to_string(&proj_path) {
+        if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(modules) = val.get_mut("modules").and_then(|m| m.as_array_mut()) {
+                modules.push(serde_json::Value::String(name.clone()));
+            }
+            if let Ok(updated) = serde_json::to_string_pretty(&val) {
+                let _ = fs::write(&proj_path, updated);
+            }
+        }
+    }
+
+    ui::blank();
+    ui::success(format!("Module \x1b[1m{name}\x1b[0m added"));
+    ui::blank();
+    ui::hint(format!("  modules/{name}/"));
+    ui::hint("  ├── module.json");
+    ui::hint("  └── src/main/app.nx");
+    ui::blank();
+    ui::hint(format!(
+        "  Set as main:  nexa-compiler.yaml → main_module: \"{name}\""
+    ));
+    ui::blank();
 }
 
 // ── Build helper ──────────────────────────────────────────────────────────────

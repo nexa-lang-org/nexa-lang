@@ -65,7 +65,10 @@ enum Commands {
         /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
-        /// Output path for the .nexa file (default: <name>.nexa)
+        /// Module to package (default: main_module from nexa-compiler.yaml)
+        #[arg(long, value_name = "MODULE")]
+        module: Option<String>,
+        /// Output path for the .nexa file (default: <name>-<module>.nexa)
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
@@ -90,6 +93,9 @@ enum Commands {
         /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
+        /// Module to publish (default: main_module from nexa-compiler.yaml)
+        #[arg(long, value_name = "MODULE")]
+        module: Option<String>,
         /// Registry URL (default: credentials or https://registry.nexa-lang.org)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
@@ -103,6 +109,9 @@ enum Commands {
         /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
+        /// Install into a specific module's lib/ instead of the project lib/
+        #[arg(long, value_name = "MODULE")]
+        module: Option<String>,
     },
 
     /// Search for packages on the registry
@@ -134,6 +143,13 @@ enum Commands {
         registry: Option<String>,
     },
 
+    // ── Modules ───────────────────────────────────────────────────────────────
+    /// Manage modules within the project
+    Module {
+        #[command(subcommand)]
+        action: ModuleAction,
+    },
+
     // ── Config ────────────────────────────────────────────────────────────────
     /// Manage global CLI configuration (~/.nexa/config.json)
     Config {
@@ -158,6 +174,19 @@ enum Commands {
 
     /// Check that the Nexa environment is correctly set up
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum ModuleAction {
+    /// Add a new module to the project
+    Add {
+        /// Module name (used as the directory name under modules/)
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Project root directory (default: current directory)
+        #[arg(short, long, value_name = "DIR")]
+        project: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -259,7 +288,11 @@ pub async fn run() {
 
         Commands::Build { project } => commands::build(project),
 
-        Commands::Package { project, output } => commands::package(project, output),
+        Commands::Package {
+            project,
+            module,
+            output,
+        } => commands::package(project, module, output),
 
         Commands::Register { registry } => commands::register(registry),
         Commands::Login { registry } => commands::login(registry),
@@ -268,8 +301,20 @@ pub async fn run() {
             TokenAction::List { registry } => commands::token_list(registry),
             TokenAction::Revoke { id, registry } => commands::token_revoke(id, registry),
         },
-        Commands::Publish { project, registry } => commands::publish(project, registry),
-        Commands::Install { package, project } => commands::install(package, project),
+        Commands::Publish {
+            project,
+            module,
+            registry,
+        } => commands::publish(project, module, registry),
+        Commands::Install {
+            package,
+            project,
+            module,
+        } => commands::install(package, project, module),
+
+        Commands::Module { action } => match action {
+            ModuleAction::Add { name, project } => commands::module_add(name, project),
+        },
 
         Commands::Search {
             query,
