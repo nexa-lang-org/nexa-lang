@@ -1,16 +1,22 @@
 use axum::{
     body::Bytes,
     extract::{Multipart, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tower_http::trace::TraceLayer;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::application::services::{auth::AuthService, packages::PackagesService};
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/// Maximum accepted bundle size for package uploads (50 MB).
+const MAX_BUNDLE_BYTES: usize = 50 * 1024 * 1024;
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
@@ -23,10 +29,31 @@ pub struct AppState {
 // ── Router ────────────────────────────────────────────────────────────────────
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
+    // Rate-limit register + login: 1 token replenished every 6 s (≈ 10 req/min),
+    // initial burst of 3. Keyed per IP to block brute-force / enumeration.
+    let auth_limiter = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_millisecond(6_000)
+            .burst_size(3)
+            .finish()
+            .expect("valid governor config"),
+    );
+    let auth_routes = Router::new()
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
+        .layer(GovernorLayer {
+            config: auth_limiter,
+        });
+
+    // CORS: public registry — allow any origin, restrict methods and headers.
+    let cors = CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+
+    Router::new()
+        .merge(auth_routes)
+        .route("/health", get(health))
         .route("/auth/tokens", post(create_token).get(list_tokens))
         .route("/auth/tokens/:id", axum::routing::delete(revoke_token))
         .route("/packages", get(list_packages))
@@ -35,6 +62,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/packages/:name/:version/download", get(download))
         .route("/packages/:name/:version/source", get(get_source))
         .route("/ui/packages/:name", get(ui_package))
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -100,6 +128,22 @@ fn err(status: StatusCode, msg: &str) -> Response {
     (status, Json(serde_json::json!({ "error": msg }))).into_response()
 }
 
+/// Package names: 1–214 chars, start with alphanumeric, only `a-z A-Z 0-9 - _ .`,
+/// no consecutive dots (prevents `..` path traversal).
+fn valid_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 214
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_alphanumeric())
+            .unwrap_or(false)
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && !name.contains("..")
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 async fn health() -> impl IntoResponse {
@@ -126,8 +170,9 @@ async fn login(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Res
             Json(TokenResponse { token }).into_response()
         }
         Err(e) => {
+            // Log the real cause internally; never reveal details to the caller.
             tracing::warn!(email = %body.email, error = %e, "Login failed");
-            err(StatusCode::UNAUTHORIZED, &e.to_string())
+            err(StatusCode::UNAUTHORIZED, "invalid credentials")
         }
     }
 }
@@ -138,6 +183,13 @@ async fn publish(
     Path(name): Path<String>,
     mut multipart: Multipart,
 ) -> Response {
+    if !valid_package_name(&name) {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid package name: use letters, digits, hyphens, underscores or dots (max 214 chars)",
+        );
+    }
+
     let token = match extract_bearer(&headers) {
         Some(t) => t,
         None => {
@@ -149,11 +201,11 @@ async fn publish(
         Ok(id) => id,
         Err(e) => {
             tracing::warn!(package = %name, error = %e, "Publish rejected: invalid token");
-            return err(StatusCode::UNAUTHORIZED, &e.to_string());
+            return err(StatusCode::UNAUTHORIZED, "invalid or expired token");
         }
     };
 
-    // Read the first multipart field (the .nexa file)
+    // Read the first multipart field (the .nexa bundle)
     let bundle_bytes = match multipart.next_field().await {
         Ok(Some(field)) => match field.bytes().await {
             Ok(b) => b.to_vec(),
@@ -162,6 +214,13 @@ async fn publish(
         Ok(None) => return err(StatusCode::BAD_REQUEST, "no file in multipart"),
         Err(e) => return err(StatusCode::BAD_REQUEST, &format!("multipart error: {e}")),
     };
+
+    if bundle_bytes.len() > MAX_BUNDLE_BYTES {
+        return err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "bundle exceeds the 50 MB upload limit",
+        );
+    }
 
     let bundle_size = bundle_bytes.len();
     match state.packages.publish(&name, user_id, bundle_bytes).await {
@@ -190,6 +249,9 @@ async fn publish(
 }
 
 async fn get_package(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    if !valid_package_name(&name) {
+        return err(StatusCode::BAD_REQUEST, "invalid package name");
+    }
     let pkg = match state.packages.get_package(&name).await {
         Ok(Some(p)) => p,
         Ok(None) => return err(StatusCode::NOT_FOUND, "package not found"),
@@ -216,6 +278,9 @@ async fn download(
     State(state): State<AppState>,
     Path((name, version)): Path<(String, String)>,
 ) -> Response {
+    if !valid_package_name(&name) {
+        return err(StatusCode::BAD_REQUEST, "invalid package name");
+    }
     match state.packages.download(&name, &version).await {
         Ok(Some(pv)) => (
             StatusCode::OK,
@@ -253,6 +318,9 @@ async fn get_source(
     State(state): State<AppState>,
     Path((name, version)): Path<(String, String)>,
 ) -> Response {
+    if !valid_package_name(&name) {
+        return err(StatusCode::BAD_REQUEST, "invalid package name");
+    }
     let pv = match state.packages.download(&name, &version).await {
         Ok(Some(pv)) => pv,
         Ok(None) => return err(StatusCode::NOT_FOUND, "version not found"),
@@ -271,6 +339,9 @@ async fn get_source(
 
 /// Simple HTML web page showing package info and source code.
 async fn ui_package(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    if !valid_package_name(&name) {
+        return err(StatusCode::BAD_REQUEST, "invalid package name");
+    }
     let pkg = match state.packages.get_package(&name).await {
         Ok(Some(p)) => p,
         Ok(None) => return err(StatusCode::NOT_FOUND, "package not found"),
