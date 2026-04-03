@@ -1,0 +1,16 @@
+# Nexa compiler output
+dist/
+.nexa/
+
+# Installed packages (project-level and module-level)
+lib/
+modules/*/lib/
+
+# Distributable bundles
+*.nexa
+
+# macOS
+.DS_Store
+
+# Environment variables
+.env

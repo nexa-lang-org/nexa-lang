@@ -1,0 +1,9 @@
+version: "0.1"
+main_module: "core"
+# include_modules:
+#   - core
+# exclude_modules: []
+# registry: "https://registry.nexa-lang.org"
+# private_registries:
+#   - url: "https://corp.registry.example.com"
+#     key: "sk_live_..."

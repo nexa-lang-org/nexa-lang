@@ -1,0 +1,15 @@
+package example;
+
+app Example {
+  server { port: 3000; }
+
+  public window HomePage {
+    public render() => Component {
+      return Page {
+        Heading("Welcome to Example!")
+      };
+    }
+  }
+
+  route "/" => HomePage;
+}
