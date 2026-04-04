@@ -56,6 +56,12 @@ pub enum IrExpr {
     Bin { op: IrBinOp, lhs: Box<IrExpr>, rhs: Box<IrExpr> },
     /// Unary operation.
     Unary { op: IrUnOp, operand: Box<IrExpr> },
+    /// `await expr`  — inside an async method.
+    Await(Box<IrExpr>),
+    /// `[e1, e2, ...]`  — list / array literal.
+    List(Vec<IrExpr>),
+    /// `import("path")`  — dynamic lazy import.
+    DynamicImport(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +114,7 @@ pub struct IrMethod {
     pub return_ty: IrType,
     pub body: Vec<IrStmt>,
     pub is_public: bool,
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone)]

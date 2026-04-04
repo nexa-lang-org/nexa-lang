@@ -137,6 +137,8 @@ pub struct Field {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Method {
     pub visibility: Visibility,
+    #[serde(default)]
+    pub is_async: bool,
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Type,
@@ -250,4 +252,10 @@ pub enum Expr {
         op: UnOp,
         expr: Box<Expr>,
     },
+    /// `await expr`  — valid inside an async method, compiles to JS `await`.
+    Await(Box<Expr>),
+    /// `[e1, e2, ...]`  — list literal, compiles to JS array.
+    ListLiteral(Vec<Expr>),
+    /// `import("path.to.Module")`  — dynamic lazy import.
+    LazyImport(String),
 }

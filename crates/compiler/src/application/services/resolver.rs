@@ -356,4 +356,146 @@ app App {
             "resolved program should contain the imported Shared class"
         );
     }
+
+    // ── Fallback 5: cross-module import ──────────────────────────────────────
+
+    #[test]
+    fn resolve_cross_module_import() {
+        // entry lives in module "api", imports "core.Button" which is in
+        // <project>/modules/core/src/main/Button.nx
+        let button_src = r#"class Button { public String label; }"#;
+        let entry_source = r#"import core.Button;
+app App {
+  window Home { }
+  route "/" => Home;
+}"#;
+        let entry = parse_entry(entry_source);
+        let entry_path = PathBuf::from("/project/modules/api/src/main/app.nx");
+
+        let mut provider = MemSourceProvider::new();
+        provider.add(
+            "/project/modules/core/src/main/Button.nx",
+            button_src,
+        );
+
+        let mut resolver = Resolver::new(
+            "/project/modules/api/src/main",
+            "/project",
+            "api",
+            provider,
+        );
+        let resolved = resolver.resolve(&entry, &entry_path).unwrap();
+
+        let has_button = resolved
+            .declarations
+            .iter()
+            .any(|d| matches!(d, Declaration::Class(c) if c.name == "Button"));
+        assert!(has_button, "cross-module Button should be resolved");
+    }
+
+    // ── Fallback 4: project-level lib (requires real FS) ────────────────────
+
+    #[test]
+    fn resolve_project_lib_fallback() {
+        use std::fs;
+        use tempfile::TempDir;
+        use crate::infrastructure::fs_source::FsSourceProvider;
+
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+
+        // <project>/lib/stdui@1.0.0/src/Button.nx
+        let pkg_src = project.join("lib/stdui@1.0.0/src");
+        fs::create_dir_all(&pkg_src).unwrap();
+        fs::write(pkg_src.join("Button.nx"), "class Button { }").unwrap();
+
+        // entry lives in <project>/modules/core/src/main/
+        let module_src = project.join("modules/core/src/main");
+        fs::create_dir_all(&module_src).unwrap();
+        let entry_path = module_src.join("app.nx");
+
+        let entry_source = "import stdui.Button; app A { window W { } route \"/\" => W; }";
+        let entry = parse_entry(entry_source);
+
+        let mut resolver = Resolver::new(
+            module_src.clone(),
+            project,
+            "core",
+            FsSourceProvider,
+        );
+        let resolved = resolver.resolve(&entry, &entry_path).unwrap();
+
+        let has_button = resolved
+            .declarations
+            .iter()
+            .any(|d| matches!(d, Declaration::Class(c) if c.name == "Button"));
+        assert!(has_button, "project lib Button should be resolved");
+    }
+
+    // ── Transitive imports ───────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_transitive_imports() {
+        // A imports B, B imports C — final program should contain both B and C.
+        let c_src = r#"class C { }"#;
+        let b_src = r#"import C;
+class B { }"#;
+        let entry_source = r#"import B;
+app App { window W { } route "/" => W; }"#;
+
+        let entry = parse_entry(entry_source);
+        let mut provider = MemSourceProvider::new();
+        provider.add("/src/main/B.nx", b_src);
+        provider.add("/src/main/C.nx", c_src);
+
+        let mut resolver = make_resolver("/src/main", provider);
+        let resolved = resolver
+            .resolve(&entry, &PathBuf::from("/src/main/app.nx"))
+            .unwrap();
+
+        let names: Vec<&str> = resolved
+            .declarations
+            .iter()
+            .filter_map(|d| {
+                if let Declaration::Class(c) = d {
+                    Some(c.name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(names.contains(&"B"), "B should be in resolved declarations");
+        assert!(names.contains(&"C"), "C should be in resolved declarations");
+    }
+
+    // ── Cycle detection ──────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_circular_import_returns_error() {
+        // A imports B, B imports A → cycle
+        let b_src = r#"import A;
+class B { }"#;
+        let entry_source = r#"import B;
+app App { window W { } route "/" => W; }"#;
+
+        let _entry = parse_entry(entry_source);
+        let mut provider = MemSourceProvider::new();
+        provider.add("/src/main/B.nx", b_src);
+        provider.add("/src/main/A.nx", "class A { }");
+
+        let _resolver = make_resolver("/src/main", provider);
+        // B tries to import A (the entry's own file path)
+        // Since A.nx exists in memory (not the entry file), this won't cycle with the entry.
+        // Instead, create a direct cycle: X imports X.
+        let cycle_src = r#"import Cycle;
+class Cycle { }"#;
+        let cycle_entry = parse_entry("import Cycle; app App { window W { } route \"/\" => W; }");
+        let mut p2 = MemSourceProvider::new();
+        p2.add("/src/main/Cycle.nx", cycle_src);
+        let mut r2 = make_resolver("/src/main", p2);
+        let err = r2
+            .resolve(&cycle_entry, &PathBuf::from("/src/main/app.nx"))
+            .unwrap_err();
+        assert!(matches!(err, ResolveError::Cycle(_)));
+    }
 }

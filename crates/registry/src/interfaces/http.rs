@@ -187,8 +187,15 @@ async fn register(State(state): State<AppState>, Json(body): Json<AuthBody>) -> 
             (StatusCode::CREATED, Json(TokenResponse { token })).into_response()
         }
         Err(e) => {
-            tracing::warn!(email = %body.email, error = %e, "Registration failed");
-            err(StatusCode::BAD_REQUEST, &e.to_string())
+            let detail = e.to_string();
+            tracing::warn!(email = %body.email, error = %detail, "Registration failed");
+            // Expose only known-safe domain messages; suppress all internal details.
+            let safe = if detail.contains("email already registered") || detail.contains("invalid email") {
+                detail.as_str()
+            } else {
+                "registration failed"
+            };
+            err(StatusCode::BAD_REQUEST, safe)
         }
     }
 }

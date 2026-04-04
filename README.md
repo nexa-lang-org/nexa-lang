@@ -6,8 +6,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Tests](https://img.shields.io/badge/tests-207%20passing-brightgreen.svg)](#)
 
-**Nexa** is a statically-typed language that compiles to HTML + JavaScript. It lets you describe full-stack web applications — server config, data models, UI components, and routes — in a single, readable syntax.
+**Nexa** is a statically-typed language that compiles to HTML + JavaScript (and WebAssembly). It lets you describe full-stack web applications — server config, data models, UI components, and routes — in a single, readable syntax with full type inference.
 
 ```nx
 package com.myapp;
@@ -16,9 +17,13 @@ app App {
   server { port: 3000; }
 
   public window HomePage {
-    public render() => Component {
+    async render() => Component {
+      let items = await fetchData();
       return Page {
-        Heading("Welcome to Nexa")
+        Heading("Welcome to Nexa"),
+        Column {
+          Text(items)
+        }
       };
     }
   }
@@ -33,15 +38,23 @@ app App {
 
 ## Features
 
-- **Typed language** — `String`, `Int`, `Bool`, `List<T>`, generics, interfaces
+- **Hindley-Milner type inference** — Damas-Milner Algorithm W with let-polymorphism, generalization, and occurs-check
+- **Typed language** — `String`, `Int`, `Bool`, `List<T>`, generics, interfaces, `async`/`await`
+- **Generic classes & type erasure** — `Box<T>`, `List<T>` with a full JS runtime (`_NexaList`)
+- **List literals** — `[1, 2, 3]` compiled to JS arrays; typed as `List<T>` by the HM engine
+- **Async / await** — `async` methods + `await expr` compile to native JS async/await
+- **Lazy loading** — `import("path.to.Module")` compiles to JS dynamic `import()`
 - **Components & Windows** — declarative UI primitives that compile to DOM calls
-- **Package system** — `import models.User` resolves across `src/main/` and `src/libs/`
+- **Module system** — multi-module projects under `modules/<name>/`; cross-module imports
+- **Package system** — `import models.User` resolves across module sources and `lib/`
 - **Built-in routing** — `route "/" => HomePage` maps URLs to window classes
 - **Integrated dev server** — `nexa run` compiles and serves with live reload
 - **Watch mode** — `nexa run --watch` recompiles and reloads the browser on every save
 - **`.nexa` bundle** — `nexa package` produces a distributable binary bundle (ZIP + AST + signature)
-- **Package manager** — `nexa publish / install` + a self-hosted registry with JWT auth and PostgreSQL
-- **Project structure** — standardized layout enforced by the CLI
+- **Package manager** — `nexa publish / install` + self-hosted registry with JWT auth and PostgreSQL
+- **WASM backend** — `WasmCodegen` emits WebAssembly Text (WAT) from the IR; `wat2wasm` produces the binary
+- **Build lockfile** — `nexa-build.lock` records SHA-256 per source file for reproducible builds
+- **Security** — Ed25519 signatures, bcrypt passwords, rate limiting, validated JWT secret
 
 ---
 
@@ -67,11 +80,10 @@ The installer:
 | Channel | Command | Description |
 |---------|---------|-------------|
 | `stable` | *(default)* | Latest tagged release — recommended |
-| `latest` | `--channel latest` | Alias for `stable` |
 | `snapshot` | `--channel snapshot` | Rolling build from `main` — unstable |
 
 ```sh
-# Install the snapshot (dev) channel
+# Install the snapshot channel
 curl ... | sh -s -- --channel snapshot
 
 # Pin a specific version
@@ -88,12 +100,6 @@ cd Nexa-lang
 cargo install --path crates/cli
 ```
 
-Verify:
-
-```bash
-nexa --version
-```
-
 ---
 
 ## Quick Start
@@ -105,56 +111,54 @@ nexa init my-app
 cd my-app
 ```
 
-This scaffolds the full project structure and initialises a git repository:
+Scaffolds the full module-based project structure:
 
 ```
 my-app/
-├── project.json        ← metadata, dependencies
-├── nexa-compiler.yaml  ← compiler settings, registry config
+├── project.json          ← metadata + module list
+├── nexa-compiler.yaml    ← compiler settings
 ├── .gitignore
-└── src/
-    └── main/
-        └── app.nx      ← entry point
+└── modules/
+    └── core/             ← default module
+        ├── module.json
+        └── src/
+            ├── main/
+            │   └── app.nx
+            └── test/
 ```
-
-Pass `--author` to set the author name, or let the CLI read it from `git config`:
 
 ```bash
 nexa init my-app --author "Alice" --version 0.2.0
 nexa init        # init in the current directory
 ```
 
-### 2. Run the dev server
+### 2. Add a module
+
+```bash
+nexa module add api
+# → modules/api/ created, project.json updated
+```
+
+### 3. Run the dev server
 
 ```bash
 nexa run
 # → Nexa dev server → http://localhost:3000
 ```
 
-### 3. Watch mode (HMR)
-
-```bash
-nexa run --watch
-# Recompiles and reloads the browser on every .nx save
-```
-
 ### 4. Build for production
 
 ```bash
 nexa build
-# → Build OK → src/dist/
+# → Build OK → modules/core/src/dist/
 ```
-
-Output: `src/dist/index.html` + `src/dist/app.js`.
 
 ### 5. Package for distribution
 
 ```bash
 nexa package
-# → Package OK → my-app.nexa
+nexa package --module api   # package a specific module
 ```
-
-Produces a single distributable file. See [`.nexa` bundle format](#nexa-bundle-format) below.
 
 ---
 
@@ -167,7 +171,7 @@ Produces a single distributable file. See [`.nexa` bundle format](#nexa-bundle-f
 | `String`  | `string`              |
 | `Int`     | `number`              |
 | `Bool`    | `boolean`             |
-| `List<T>` | `T[]`                 |
+| `List<T>` | `T[]` (`_NexaList`)   |
 | `Void`    | `void`                |
 
 ### Classes
@@ -188,6 +192,21 @@ public class User {
 }
 ```
 
+### Generic classes
+
+```nx
+public class Box<T> {
+  T value;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+// Type args are erased at JS runtime (type-safe at compile time):
+let b = Box<Int>(42);
+```
+
 ### Interfaces
 
 ```nx
@@ -196,9 +215,35 @@ public interface Repository<T> {
 }
 ```
 
-### Components
+### Async / Await
 
-Reusable UI elements that render DOM nodes:
+```nx
+public class ApiClient {
+  async fetch(url: String) => String {
+    let data = await loadUrl(url);
+    return data;
+  }
+}
+```
+
+### List literals
+
+```nx
+let numbers = [1, 2, 3, 4, 5];
+let names   = ["Alice", "Bob"];
+```
+
+### Lazy loading
+
+Dynamic import inside an async method:
+
+```nx
+async load() => Void {
+  let MathModule = await import("std.math.Math");
+}
+```
+
+### Components
 
 ```nx
 public component UserCard {
@@ -216,9 +261,7 @@ public component UserCard {
 }
 ```
 
-### Windows
-
-Full-page views mapped to routes:
+### Windows & Routing
 
 ```nx
 public window AboutPage {
@@ -229,6 +272,9 @@ public window AboutPage {
     };
   }
 }
+
+route "/"      => HomePage;
+route "/about" => AboutPage;
 ```
 
 ### UI Primitives
@@ -244,27 +290,14 @@ public window AboutPage {
 | `Button(label, onClick)`       | Clickable button          |
 | `Input(placeholder, onChange)` | Text input field          |
 
-### Routing
+### Cross-module imports
 
 ```nx
-route "/"      => HomePage;
-route "/about" => AboutPage;
-```
+// modules/api/src/main/Client.nx
+import core.models.User;
 
-### Imports
-
-```nx
-import models.User;               // → src/main/models/User.nx
-import libs.validation.Validator; // → src/libs/validation/Validator.nx
-```
-
-### Control flow
-
-```nx
-if (count > 0) {
-  return Page { Heading("Items found") };
-} else {
-  return Page { Text("Empty") };
+public class Client {
+  fetch() => User { ... }
 }
 ```
 
@@ -272,21 +305,26 @@ if (count > 0) {
 
 ## Project Structure
 
-Every Nexa project follows this layout:
+Every Nexa project follows this module-based layout:
 
 ```
 my-app/
-├── project.json          # Project metadata (name, version, author, main)
-├── nexa-compiler.yaml    # Compiler configuration
-└── src/
-    ├── main/             # Source .nx files (required)
-    │   └── app.nx        # Entry point declared in project.json
-    ├── libs/             # Reusable libraries (auto-created)
-    ├── test/             # Future: unit tests (auto-created)
-    ├── .nexa/            # Compiler internals / cache (auto-created, gitignored)
-    └── dist/             # Compiler output (auto-created, gitignored)
-        ├── index.html
-        └── app.js
+├── project.json           # { name, version, author, modules: ["core", "api"] }
+├── nexa-compiler.yaml     # { version, main_module: "core" }
+├── nexa-build.lock        # SHA-256 per source file (reproducible builds)
+├── .gitignore
+├── lib/                   # shared project dependencies
+└── modules/
+    ├── core/
+    │   ├── module.json    # { name, main: "app.nx", dependencies: {} }
+    │   ├── lib/           # module-local dependencies (gitignored)
+    │   └── src/
+    │       ├── main/      # .nx source files
+    │       ├── test/      # unit tests
+    │       └── dist/      # compiler output (gitignored)
+    └── api/
+        ├── module.json
+        └── src/main/
 ```
 
 ---
@@ -295,197 +333,139 @@ my-app/
 
 ```
 nexa init    [<name>] [--author <name>] [--version <ver>] [--no-git]
-    Scaffold a new Nexa project (creates directory, git repo, hello-world app)
+    Scaffold a new Nexa project
+
+nexa module add <name>
+    Add a new module to the project
 
 nexa run     [<bundle.nexa>] [--project <dir>] [--port <port>] [--watch]
-    Compile + start dev server, or serve an existing .nexa bundle directly
+    Compile + start dev server; or serve an existing .nexa bundle
 
 nexa build   [--project <dir>]
-    Compile to src/dist/
+    Compile all active modules to dist/
 
-nexa package [--project <dir>] [--output <file>]
-    Package the project into a distributable .nexa bundle
+nexa package [--project <dir>] [--module <name>] [--output <file>]
+    Package a module into a distributable .nexa bundle
 
 nexa register [--registry <url>]
-    Create an account on a registry (prompts for email + password)
+    Create a registry account (prompts for email + password)
 
 nexa login   [--registry <url>]
-    Log in to a registry and save credentials to ~/.nexa/credentials.json
+    Log in and save credentials to ~/.nexa/credentials.json
 
-nexa publish [--project <dir>] [--registry <url>]
-    Build a .nexa bundle and publish it to the registry
+nexa publish [--project <dir>] [--module <name>] [--registry <url>]
+    Build and publish a module to the registry
 
-nexa install [<package[@version]>] [--project <dir>]
-    Install a package from the registry into nexa-libs/
-    Omit <package> to install all dependencies from project.json
+nexa install [<package[@version]>] [--project <dir>] [--module <name>]
+    Install a package (--module installs into that module's lib/)
+
+nexa token   create|list|revoke
+    Manage long-lived API tokens
+
+nexa doctor  [--project <dir>]
+    Diagnose project configuration issues
 ```
 
 `--project` defaults to the current directory.  
-`--registry` defaults to the URL stored in `~/.nexa/credentials.json`, then to `https://registry.nexa-lang.org`.  
-`--watch` enables hot-module reload via WebSocket.  
-`--output` defaults to `<project-name>.nexa` in the current directory.
+`--registry` defaults to `~/.nexa/credentials.json`, then `https://registry.nexa-lang.org`.
 
 ---
 
 ## Package Manager
 
-Nexa comes with a built-in package manager backed by a self-hosted registry.
-
 ### Declaring dependencies
 
-In `project.json`, `dependencies` is a map of package name → semver constraint:
+`project.json` (project-wide):
 
 ```json
 {
   "name": "my-app",
   "version": "0.1.0",
-  "dependencies": {
-    "ui-kit": "^1.0.0",
-    "auth-utils": "2.3.1"
-  }
+  "modules": ["core", "api"],
+  "dependencies": { "ui-kit": "^1.0.0" }
+}
+```
+
+`modules/api/module.json` (module-specific):
+
+```json
+{
+  "name": "api",
+  "main": "app.nx",
+  "dependencies": { "http-client": "1.2.0" }
 }
 ```
 
 ### Workflow
 
 ```bash
-# 1. Create an account
-nexa register
-
-# 2. Log in (saves JWT to ~/.nexa/credentials.json)
-nexa login
-
-# 3. Publish your library
-nexa publish --project path/to/my-lib
-
-# 4. Install a dependency
-nexa install ui-kit
-nexa install ui-kit@1.2.0   # pin a specific version
-
-# 5. Install all deps from project.json
-nexa install
-```
-
-Packages are extracted to `nexa-libs/<name>@<version>/` (gitignored). A JSON lockfile is written to `nexa-libs/.lock`.
-
-### Private registries
-
-Add private registries in `nexa-compiler.yaml`. They are tried before the public registry:
-
-```yaml
-version: "0.1"
-registry: "https://registry.nexa-lang.org"
-private_registries:
-  - url: "https://corp.registry.example.com"
-    key: "sk_live_abc123"
+nexa register && nexa login
+nexa install ui-kit               # → lib/ui-kit@1.0.0/
+nexa install http-client --module api  # → modules/api/lib/http-client@1.2.0/
+nexa publish --module core
 ```
 
 ### Registry API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/auth/register` | Create an account → `{ token }` |
-| `POST` | `/auth/login` | Log in → `{ token }` |
-| `POST` | `/packages/:name/publish` | Publish a `.nexa` bundle (Bearer auth) |
-| `GET`  | `/packages/:name` | Package info + version list |
-| `GET`  | `/packages/:name/:version/download` | Download the `.nexa` bundle |
-| `GET`  | `/packages?q=&page=&per_page=` | Search packages |
-
-### Running a registry
-
-The registry is a separate binary (`nexa-registry`) backed by PostgreSQL:
-
-```bash
-# Start the DB
-docker compose up -d registry-db
-
-# Start the registry
-DATABASE_URL=postgres://nexa:nexa@localhost:5432/nexa_registry \
-JWT_SECRET=change-me-in-prod \
-cargo run -p nexa-registry
-# → listening on port 4000
-```
-
-See `docker-compose.yml` at the workspace root for the full Docker Compose setup.
+| `POST` | `/v1/auth/register` | Create account |
+| `POST` | `/v1/auth/login` | Log in → JWT |
+| `POST` | `/v1/packages/:name/publish` | Publish bundle (Bearer) |
+| `GET`  | `/v1/packages/:name` | Package info |
+| `GET`  | `/v1/packages/:name/:version/download` | Download bundle |
+| `GET`  | `/v1/packages?q=` | Search |
 
 ---
 
 ## `.nexa` Bundle Format
 
-`nexa package` produces a distributable binary bundle analogous to an Android APK or an Electron ASAR — a ZIP archive that can be deployed and run directly without recompiling from source.
-
 ```
 my-app.nexa  (ZIP)
-├── app.nxb        ← optimized AST in binary format
-├── manifest.json  ← auto-generated metadata
-└── signature.sig  ← SHA-256 integrity hash
+├── app.nxb        ← optimized AST (bincode, magic NXB\x01)
+├── manifest.json  ← { name, version, nexa_version, nxb_version, created_at }
+└── signature.sig  ← Ed25519 signature (publisher signs, registry verifies)
 ```
 
-### `app.nxb` — compiled bytecode
-
-The `.nxb` file contains the fully-resolved, semantically-validated, and **optimized** AST serialized in binary format (4-byte magic `NXB\x01` + [bincode](https://github.com/bincode-org/bincode) payload).
-
-Before serialization, the compiler runs four optimization passes over the AST:
+Four optimizer passes run before serialization:
 
 | Pass | What it does |
 |------|-------------|
-| **Dead code removal** | Strips declarations unreachable from any route or live reference |
-| **Component inlining** | Inlines trivial zero-field, single-`render` components at their call sites |
-| **Tree flattening** | Collapses redundant nested blocks of the same type (`Page { Page { … } }` → `Page { … }`) |
-| **Constant folding** | Evaluates constant expressions at compile time (`2 + 3` → `5`, `"a" + "b"` → `"ab"`) |
-
-When `nexa run my-app.nexa` is called, the bundle is extracted, the signature is validated, the AST is deserialized, and the `CodeGenerator` produces HTML + JS on the fly — no `.nx` sources needed.
-
-### `manifest.json` — bundle metadata
-
-Auto-generated at package time:
-
-```json
-{
-  "name": "my-app",
-  "version": "0.1.0",
-  "nexa_version": "0.1.0",
-  "nxb_version": 1,
-  "created_at": 1743600000
-}
-```
-
-### `signature.sig` — integrity check
-
-A hex-encoded SHA-256 hash of the concatenated `app.nxb` and `manifest.json` bytes. Verified automatically by `nexa run` before the bundle is loaded.
+| **Dead code removal** | Strips declarations unreachable from any route |
+| **Component inlining** | Inlines trivial single-render components |
+| **Tree flattening** | Collapses `Page { Page { … } }` → `Page { … }` |
+| **Constant folding** | `2 + 3` → `5`, `"a" + "b"` → `"ab"` |
 
 ---
 
 ## Architecture
 
-Nexa is a Rust workspace with four crates, each following Clean Architecture (domain / application / infrastructure / interfaces):
+Nexa is a Rust workspace with four crates following Clean Architecture:
 
 ```
 crates/
 ├── compiler/
-│   ├── domain/          AST nodes, Span value object
+│   ├── domain/         AST, IR (IrModule / IrExpr / IrStmt / IrType), Span
 │   ├── application/
-│   │   ├── ports/       SourceProvider trait (filesystem abstraction)
-│   │   └── services/    Lexer, Parser, Resolver, SemanticAnalyzer,
-│   │                    Optimizer, Packager, CodeGenerator
-│   └── infrastructure/  FsSourceProvider (prod), MemSourceProvider (tests)
+│   │   ├── ports/      SourceProvider trait
+│   │   └── services/   Lexer, Parser, Resolver (5-step), SemanticAnalyzer
+│   │                   (7 passes incl. HM), Optimizer, Packager,
+│   │                   CodeGenerator (JS), WasmCodegen (WAT)
+│   └── infrastructure/ FsSourceProvider, MemSourceProvider
 │
 ├── cli/
-│   ├── application/     project.json / nexa-compiler.yaml config, credentials,
-│   │                    run/build/package/login/register/publish/install commands
-│   └── interfaces/      Clap CLI definition (Cli, Commands)
+│   ├── application/    project.rs, commands/ (init, build, module, registry,
+│   │                   token, config, doctor), credentials, updater
+│   └── interfaces/     Clap CLI
 │
 ├── server/
-│   ├── application/     AppState, SharedState, HMR broadcast
-│   └── interfaces/      Axum routes (/, /app.js, /ws WebSocket)
+│   └── interfaces/     Axum dev server (/, /app.js, /ws HMR)
 │
 └── registry/
-    ├── domain/          User, Package, PackageVersion entities
-    ├── application/
-    │   ├── ports/       UserStore + PackageStore traits
-    │   └── services/    AuthService (JWT/bcrypt), PackagesService
-    ├── infrastructure/  PgUserStore, PgPackageStore (sqlx)
-    └── interfaces/      Axum HTTP API (auth, publish, download, search)
+    ├── domain/         User, Package entities
+    ├── application/    AuthService (JWT/bcrypt), PackagesService
+    ├── infrastructure/ PgUserStore, PgPackageStore (sqlx)
+    └── interfaces/     Axum HTTP API (/v1/auth/*, /v1/packages/*)
 ```
 
 **Compilation pipeline:**
@@ -494,27 +474,36 @@ crates/
 .nx source
     │
     ▼
-Lexer            tokenise source into a flat token stream
+Lexer              tokenise → flat token stream
     │
     ▼
-Parser           build a typed AST (Program, ClassDecl, Expr, …)
+Parser             token stream → typed AST
     │
     ▼
-Resolver         load imported .nx files, merge declarations, detect cycles
-    │
+Resolver           5-step import resolution (relative → module → lib module
+    │              → lib project → cross-module); cycle detection
     ▼
-SemanticAnalyzer check types, undefined references, route targets
+SemanticAnalyzer   7 passes:
+    │              1. Name collection
+    │              2. Reference validation (extends / implements)
+    │              3. Import validation
+    │              4. Route validation
+    │              5. Type checking (annotations + return types)
+    │              6. Generic param validation
+    │              7. Hindley-Milner type inference (Damas-Milner Algorithm W,
+    │                 let-polymorphism, generalize/instantiate, occurs-check)
     │
-    ├── nexa build / nexa run
-    │       ▼
-    │   CodeGenerator   emit index.html + app.js
+    ├── nexa build / nexa run ──► Lower (AST → IR) ──► CodeGenerator (JS)
+    │
+    ├── nexa wasm ──────────────► Lower (AST → IR) ──► WasmCodegen (WAT)
     │
     └── nexa package
-            ▼
-        Optimizer        dead code removal → inlining → flattening → constant folding
             │
             ▼
-        Packager         serialize AST to app.nxb, generate manifest, sign
+        Optimizer  (4 passes)
+            │
+            ▼
+        Packager   (NXB + manifest + Ed25519 signature)
 ```
 
 ---
@@ -527,19 +516,28 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## Roadmap
 
-- [x] `nexa init` scaffold command
-- [x] Watch mode (`nexa run --watch`) with HMR via WebSocket
+- [x] `nexa init` scaffold command + module system (`nexa module add`)
+- [x] Watch mode with HMR via WebSocket
 - [x] Error spans with rustc-style source locations
-- [x] Clean Architecture (domain / application / infrastructure / interfaces)
-- [x] `.nexa` bundle format (NXB bytecode + manifest + SHA-256 signature)
-- [x] Optimizer pipeline (dead code removal, inlining, flattening, constant folding)
-- [x] Package manager (`nexa publish / install`) + self-hosted registry
-- [x] JWT auth + bcrypt password hashing for the registry
-- [x] Private registry support in `nexa-compiler.yaml`
-- [ ] Semver constraint resolution for `dependencies` in `project.json`
+- [x] Clean Architecture across all four crates
+- [x] `.nexa` bundle format (NXB + manifest + Ed25519 signature)
+- [x] Optimizer pipeline (4 passes)
+- [x] Package manager + self-hosted registry (JWT, bcrypt, rate limiting)
+- [x] Multi-module build (`active_modules`, cross-module imports)
+- [x] IR (target-agnostic intermediate representation)
+- [x] WASM backend (WAT from IR)
+- [x] Hindley-Milner type inference — Damas-Milner Algorithm W with let-polymorphism
+- [x] Generic classes — syntax + Pass 6 validation + JS type erasure + `_NexaList` runtime
+- [x] `async`/`await` — async methods + JS codegen
+- [x] List literals `[...]` + lazy `import("path")` dynamic import
+- [x] Build lockfile (SHA-256 per source file)
+- [x] Coverage CI (cargo-tarpaulin)
+- [ ] Standard library runtime bodies (`std.io`, `std.math`, `std.str`, `std.collections`)
+- [ ] Semver constraint resolution for `dependencies`
 - [ ] Unit test runner (`nexa test`)
-- [ ] Standard library (`std/`)
 - [ ] Language Server Protocol (LSP) support
+- [ ] Garbage collector (for non-JS runtimes)
+- [ ] Thread / coroutines (Web Workers + WASM threads)
 
 ---
 

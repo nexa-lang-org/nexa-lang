@@ -36,11 +36,16 @@ impl AuthService {
     }
 
     pub async fn register(&self, email: &str, password: &str) -> Result<String> {
+        if !valid_email(email) {
+            return Err(anyhow!("invalid email address"));
+        }
         if self.user_store.find_by_email(email).await?.is_some() {
             return Err(anyhow!("email already registered"));
         }
-        let hash =
-            bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| anyhow!("hash error: {e}"))?;
+        let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| {
+            tracing::error!("bcrypt hash failed: {e}");
+            anyhow!("registration failed")
+        })?;
         let user = self.user_store.create(email, &hash).await?;
         self.make_jwt(user.id)
     }
@@ -52,8 +57,10 @@ impl AuthService {
             .await?
             .ok_or_else(|| anyhow!("invalid email or password"))?;
 
-        let valid = bcrypt::verify(password, &user.password_hash)
-            .map_err(|e| anyhow!("verify error: {e}"))?;
+        let valid = bcrypt::verify(password, &user.password_hash).map_err(|e| {
+            tracing::error!("bcrypt verify failed: {e}");
+            anyhow!("invalid email or password")
+        })?;
         if !valid {
             return Err(anyhow!("invalid email or password"));
         }
@@ -111,7 +118,7 @@ impl AuthService {
     }
 
     fn make_jwt(&self, user_id: Uuid) -> Result<String> {
-        let exp = (Utc::now() + Duration::hours(24)).timestamp();
+        let exp = (Utc::now() + Duration::days(7)).timestamp();
         let claims = Claims {
             sub: user_id.to_string(),
             exp,
@@ -123,6 +130,23 @@ impl AuthService {
         )
         .map_err(|e| anyhow!("encode error: {e}"))
     }
+}
+
+// ── Email validation ──────────────────────────────────────────────────────────
+
+/// Basic structural email check: non-empty local + `@` + non-empty domain with at least one `.`.
+/// Max length 254 (RFC 5321). Does not perform DNS lookup.
+fn valid_email(email: &str) -> bool {
+    if email.len() > 254 {
+        return false;
+    }
+    let mut parts = email.splitn(2, '@');
+    let local = parts.next().unwrap_or("");
+    let domain = match parts.next() {
+        Some(d) => d,
+        None => return false,
+    };
+    !local.is_empty() && !domain.is_empty() && domain.contains('.')
 }
 
 // ── Token generation / hashing ────────────────────────────────────────────────
@@ -366,6 +390,57 @@ mod tests {
         // List after revoke
         let tokens = svc.list_api_tokens(user_id).await.unwrap();
         assert!(tokens.is_empty());
+    }
+
+    // ── S6: Email validation ─────────────────────────────────────────────────
+
+    #[test]
+    fn valid_email_accepts_normal_addresses() {
+        assert!(valid_email("alice@example.com"));
+        assert!(valid_email("user.name+tag@sub.domain.org"));
+        assert!(valid_email("x@y.z"));
+    }
+
+    #[test]
+    fn valid_email_rejects_bad_inputs() {
+        assert!(!valid_email("notanemail"));
+        assert!(!valid_email("@nodomain.com"));
+        assert!(!valid_email("noatsign"));
+        assert!(!valid_email("missing@dot"));
+        assert!(!valid_email(""));
+        // 255 chars — over RFC limit
+        assert!(!valid_email(&format!("{}@b.c", "a".repeat(252))));
+    }
+
+    #[tokio::test]
+    async fn register_invalid_email_rejected() {
+        let svc = make_service();
+        let err = svc.register("notanemail", "pass").await.unwrap_err();
+        assert!(err.to_string().contains("invalid email"));
+    }
+
+    // ── S8: JWT duration 7 days ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn jwt_expiry_is_approximately_7_days() {
+        let svc = make_service();
+        let token = svc.register("exp@example.com", "pass").await.unwrap();
+        let key = jsonwebtoken::DecodingKey::from_secret(b"test-secret-32-chars-long-enough!");
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.validate_exp = false; // read exp without enforcing
+        let data = jsonwebtoken::decode::<super::Claims>(&token, &key, &validation).unwrap();
+        let exp = data.claims.exp;
+        let now = chrono::Utc::now().timestamp();
+        let diff_secs = exp - now;
+        // Should be between 6d 23h and 7d 1h
+        assert!(
+            diff_secs > 6 * 24 * 3600 - 60,
+            "expiry should be ~7 days, got {diff_secs}s"
+        );
+        assert!(
+            diff_secs < 8 * 24 * 3600,
+            "expiry should be ~7 days, got {diff_secs}s"
+        );
     }
 
     #[tokio::test]

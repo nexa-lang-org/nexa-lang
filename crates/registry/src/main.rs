@@ -24,6 +24,17 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+
+    if jwt_secret.len() < 32 {
+        tracing::error!(
+            len = jwt_secret.len(),
+            "JWT_SECRET is too short ({} chars) — minimum 32 required. \
+             A short secret is trivially brute-forceable. Aborting.",
+            jwt_secret.len()
+        );
+        std::process::exit(1);
+    }
+
     let port: u16 = std::env::var("PORT")
         .unwrap_or_else(|_| "4000".into())
         .parse()

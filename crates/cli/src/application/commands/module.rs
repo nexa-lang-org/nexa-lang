@@ -89,3 +89,135 @@ app {app} {{
     ));
     ui::blank();
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, path::Path};
+    use tempfile::TempDir;
+
+    /// Minimal valid project layout that `load_project` accepts.
+    fn make_project(dir: &Path) {
+        fs::write(
+            dir.join("project.json"),
+            r#"{"name":"test","version":"0.1.0","author":"Dev","modules":["core"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("nexa-compiler.yaml"),
+            "version: \"0.1\"\nmain_module: \"core\"\n",
+        )
+        .unwrap();
+        let src = dir.join("modules").join("core").join("src").join("main");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            dir.join("modules").join("core").join("module.json"),
+            r#"{"name":"core","main":"app.nx"}"#,
+        )
+        .unwrap();
+        fs::write(src.join("app.nx"), "").unwrap();
+    }
+
+    #[test]
+    fn module_add_creates_module_directory_structure() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+
+        assert!(tmp.path().join("modules").join("api").join("module.json").exists());
+        assert!(tmp
+            .path()
+            .join("modules")
+            .join("api")
+            .join("src")
+            .join("main")
+            .join("app.nx")
+            .exists());
+        assert!(tmp
+            .path()
+            .join("modules")
+            .join("api")
+            .join("src")
+            .join("test")
+            .is_dir());
+    }
+
+    #[test]
+    fn module_add_module_json_has_correct_name_and_main() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("api").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(val["name"].as_str(), Some("api"));
+        assert_eq!(val["main"].as_str(), Some("app.nx"));
+        assert!(val["dependencies"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn module_add_app_nx_uses_pascal_case() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add("my-service".to_string(), Some(tmp.path().to_path_buf()));
+
+        let raw = fs::read_to_string(
+            tmp.path()
+                .join("modules")
+                .join("my-service")
+                .join("src")
+                .join("main")
+                .join("app.nx"),
+        )
+        .unwrap();
+        assert!(raw.contains("app MyService"), "expected 'app MyService' in:\n{raw}");
+        assert!(raw.contains("package my_service"), "expected 'package my_service' in:\n{raw}");
+    }
+
+    #[test]
+    fn module_add_updates_project_json_modules_list() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+
+        let raw = fs::read_to_string(tmp.path().join("project.json")).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let modules: Vec<_> = val["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.as_str())
+            .collect();
+        assert!(modules.contains(&"core"), "core should still be present");
+        assert!(modules.contains(&"api"), "api should be added");
+    }
+
+    #[test]
+    fn module_add_multiple_modules_accumulate() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+        module_add("worker".to_string(), Some(tmp.path().to_path_buf()));
+
+        let raw = fs::read_to_string(tmp.path().join("project.json")).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let modules: Vec<_> = val["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.as_str())
+            .collect();
+        assert_eq!(modules.len(), 3); // core + api + worker
+        assert!(modules.contains(&"worker"));
+    }
+}

@@ -1,3 +1,16 @@
+//! # nexa-compiler — internal API
+//!
+//! This crate is the Nexa compiler pipeline used directly by the `nexa` CLI.
+//! It is **not** a stable public API: it is consumed exclusively by crates
+//! within this workspace (primarily `crates/cli`).
+//!
+//! **semver exemption**: breaking changes to this crate's public interface do
+//! not constitute a semver violation for the workspace. If `nexa-compiler` is
+//! ever published to crates.io as a standalone library, a stable API contract
+//! must be defined at that point.
+//!
+//! Downstream consumers outside this workspace should not depend on this crate.
+
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
@@ -7,6 +20,7 @@ pub use application::services::packager::{decode_nxb, PackageError};
 pub use application::services::parser::Parser;
 pub use application::services::resolver::Resolver;
 pub use application::services::semantic::SemanticAnalyzer;
+pub use application::services::wasm_codegen::{WasmCodegen, WasmCodegenError};
 
 use crate::domain::span::Span;
 use std::{fmt, path::Path};
@@ -320,6 +334,95 @@ pub fn compile_project_file(
     run_pipeline(&source, entry, src_root, project_root, module_name)
 }
 
+/// The output of the WASM backend: WebAssembly Text format ready for `wat2wasm`.
+pub struct WasmCompileResult {
+    /// WAT source text.  Assemble with: `wat2wasm app.wat -o app.wasm`
+    pub wat: String,
+}
+
+/// Compile a `.nx` file in a structured project to WebAssembly Text format.
+///
+/// Pipeline: Lex → Parse → Resolve → SemanticAnalyzer → Lower (IR) → WASM codegen.
+///
+/// The returned [`WasmCompileResult::wat`] is a `.wat` source string that can be
+/// assembled to binary WASM with `wat2wasm` (from the WABT toolkit) or the `wat`
+/// crate.
+#[allow(clippy::result_large_err)]
+pub fn compile_to_wasm(
+    entry: &Path,
+    src_root: &Path,
+    project_root: &Path,
+    module_name: &str,
+) -> Result<WasmCompileResult, CompileError> {
+    let source = std::fs::read_to_string(entry).map_err(|e| CompileError {
+        span: Span::dummy(),
+        kind: CompileErrorKind::Resolve(application::services::resolver::ResolveError::Io(
+            entry.display().to_string(),
+            e,
+        )),
+        file: Some(entry.display().to_string()),
+        source: None,
+    })?;
+
+    let file = entry.display().to_string();
+    let src = source.clone();
+
+    let tokens = application::services::lexer::Lexer::new(&source)
+        .tokenize()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Lex(e),
+            file: Some(file.clone()),
+            source: Some(src.clone()),
+        })?;
+
+    let program = application::services::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| CompileError {
+            span: e.span(),
+            kind: CompileErrorKind::Parse(e),
+            file: Some(file.clone()),
+            source: Some(src.clone()),
+        })?;
+
+    let resolved = application::services::resolver::Resolver::new(
+        src_root,
+        project_root,
+        module_name,
+        infrastructure::fs_source::FsSourceProvider,
+    )
+    .resolve(&program, entry)
+    .map_err(|e| CompileError {
+        span: Span::dummy(),
+        kind: CompileErrorKind::Resolve(e),
+        file: Some(file.clone()),
+        source: None,
+    })?;
+
+    let mut analyzer = application::services::semantic::SemanticAnalyzer::new();
+    analyzer.analyze(&resolved).map_err(|e| CompileError {
+        span: e.span(),
+        kind: CompileErrorKind::Semantic(e),
+        file: Some(file.clone()),
+        source: Some(src.clone()),
+    })?;
+
+    let ir = application::services::lower::lower(&resolved);
+
+    let wat = application::services::wasm_codegen::WasmCodegen::new()
+        .generate_wat(&ir)
+        .map_err(|e| CompileError {
+            span: Span::dummy(),
+            kind: CompileErrorKind::Codegen(
+                application::services::codegen::CodegenError::Generic(e.to_string()),
+            ),
+            file: Some(file.clone()),
+            source: None,
+        })?;
+
+    Ok(WasmCompileResult { wat })
+}
+
 /// Compile from a string (no import resolution).
 #[allow(clippy::result_large_err)]
 pub fn compile_str(source: &str) -> Result<CompileResult, CompileError> {
@@ -420,5 +523,58 @@ mod tests {
     #[test]
     fn compile_str_empty_source_returns_err() {
         assert!(compile_str("").is_err());
+    }
+
+    // ── stdlib parse tests ────────────────────────────────────────────────────
+
+    fn parse_lib_source(src: &str) -> crate::domain::ast::Program {
+        use crate::application::services::{lexer::Lexer, parser::Parser};
+        let tokens = Lexer::new(src).tokenize().expect("lex error");
+        Parser::new(tokens).parse_lib().expect("parse_lib error")
+    }
+
+    #[test]
+    fn stdlib_io_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/io.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Print")
+        }));
+    }
+
+    #[test]
+    fn stdlib_math_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/math.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Math")
+        }));
+    }
+
+    #[test]
+    fn stdlib_str_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/str.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Str")
+        }));
+    }
+
+    #[test]
+    fn stdlib_option_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/option.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Option")
+        }));
+    }
+
+    #[test]
+    fn stdlib_result_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/result.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Result")
+        }));
     }
 }

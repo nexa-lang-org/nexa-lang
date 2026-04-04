@@ -7,3 +7,4 @@ pub mod parser;
 pub mod resolver;
 pub mod semantic;
 pub mod types;
+pub mod wasm_codegen;

@@ -78,6 +78,45 @@ jobs:
       - run: cargo build --all
       - run: cargo test --all
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    # Runs in parallel with the other CI jobs; does NOT block the pipeline.
+    # A coverage drop surfaces as a warning in the PR check, not a failure.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-coverage-
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+      - name: Run coverage
+        run: |
+          cargo tarpaulin \
+            --all \
+            --timeout 120 \
+            --out Xml \
+            --output-dir coverage/
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/cobertura.xml
+          retention-days: 7
+      - name: Publish to Codecov (optional)
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: coverage/cobertura.xml
+          fail_ci_if_error: false
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Docker snapshot — main push + workflow_dispatch only
 # ─────────────────────────────────────────────────────────────────────────────

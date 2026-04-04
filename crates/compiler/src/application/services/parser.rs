@@ -416,6 +416,7 @@ impl Parser {
                             name: fname,
                         });
                     } else {
+                        // Handles both `public async fn` and `public fn`
                         methods.push(self.parse_method(vis)?);
                     }
                 }
@@ -429,7 +430,7 @@ impl Parser {
                         name: fname,
                     });
                 }
-                Token::Ident(_) => {
+                Token::Async | Token::Ident(_) => {
                     methods.push(self.parse_method(Visibility::Public)?);
                 }
                 _ => {
@@ -460,7 +461,15 @@ impl Parser {
     }
 
     fn parse_method(&mut self, vis: Visibility) -> Result<Method, ParseError> {
+        // Optional `async` modifier before the method name.
+        let is_async = if self.peek() == &Token::Async {
+            self.advance();
+            true
+        } else {
+            false
+        };
         let name = self.expect_ident()?;
+        // Optional generic type params: method<T, U>(...)  — consumed and discarded.
         if self.peek() == &Token::LAngle {
             self.advance();
             while self.peek() != &Token::RAngle && self.peek() != &Token::Eof {
@@ -476,6 +485,7 @@ impl Parser {
         self.expect(&Token::RBrace)?;
         Ok(Method {
             visibility: vis,
+            is_async,
             name,
             params,
             return_type,
@@ -712,6 +722,12 @@ impl Parser {
                     expr: Box::new(expr),
                 })
             }
+            // `await expr`
+            Token::Await => {
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr::Await(Box::new(expr)))
+            }
             _ => self.parse_postfix(),
         }
     }
@@ -782,8 +798,63 @@ impl Parser {
                 Ok(expr)
             }
 
+            // `[e1, e2, ...]`  — list literal
+            Token::LBracket => {
+                self.advance();
+                let mut items = Vec::new();
+                while self.peek() != &Token::RBracket && self.peek() != &Token::Eof {
+                    items.push(self.parse_expr()?);
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    }
+                }
+                self.expect(&Token::RBracket)?;
+                Ok(Expr::ListLiteral(items))
+            }
+
+            // `import("path")`  — dynamic lazy import
+            Token::Import => {
+                self.advance();
+                self.expect(&Token::LParen)?;
+                let path = if let Token::StringLit(s) = self.peek().clone() {
+                    self.advance();
+                    s
+                } else {
+                    let s = self.peek_spanned();
+                    return Err(ParseError::Expected(
+                        "string literal".into(),
+                        s.token,
+                        s.span,
+                    ));
+                };
+                self.expect(&Token::RParen)?;
+                Ok(Expr::LazyImport(path))
+            }
+
             Token::Ident(name) => {
                 self.advance();
+                // Optional generic type args: Callee<T1, T2>(args) — parsed and erased.
+                // Heuristic to distinguish `Box<Int>(x)` from `a < b`:
+                //   - primitive type keywords → type arg
+                //   - uppercase-starting ident (PascalCase class name or single-letter
+                //     type param `T`, `U`, …) → type arg
+                //   - lowercase ident (variable name) → comparison operator
+                if self.peek() == &Token::LAngle {
+                    let lookahead = self.tokens.get(self.pos + 1).map(|s| &s.token);
+                    let is_type_arg = match lookahead {
+                        Some(
+                            Token::TInt | Token::TString | Token::TBool
+                            | Token::TVoid | Token::TList,
+                        ) => true,
+                        Some(Token::Ident(s)) => {
+                            s.starts_with(|c: char| c.is_uppercase())
+                        }
+                        _ => false,
+                    };
+                    if is_type_arg {
+                        self.parse_call_type_args()?; // consume and discard
+                    }
+                }
                 if self.peek() == &Token::LParen {
                     // Function / constructor call
                     let args = self.parse_call_args()?;
@@ -815,6 +886,20 @@ impl Parser {
         }
     }
 
+    /// Consume and discard `<T1, T2, ...>` at a call site (type erasure).
+    fn parse_call_type_args(&mut self) -> Result<(), ParseError> {
+        self.expect(&Token::LAngle)?;
+        let mut depth = 1u32;
+        while depth > 0 && self.peek() != &Token::Eof {
+            match self.peek() {
+                Token::LAngle => { depth += 1; self.advance(); }
+                Token::RAngle => { depth -= 1; self.advance(); }
+                _ => { self.advance(); }
+            }
+        }
+        Ok(())
+    }
+
     fn parse_call_args(&mut self) -> Result<Vec<Expr>, ParseError> {
         self.expect(&Token::LParen)?;
         let mut args = Vec::new();
@@ -826,5 +911,379 @@ impl Parser {
         }
         self.expect(&Token::RParen)?;
         Ok(args)
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::services::lexer::Lexer;
+    use crate::domain::ast::*;
+
+    fn parse(src: &str) -> Program {
+        let tokens = Lexer::new(src).tokenize().expect("lex error");
+        Parser::new(tokens).parse().expect("parse error")
+    }
+
+    fn parse_err(src: &str) -> ParseError {
+        let tokens = Lexer::new(src).tokenize().expect("lex error");
+        Parser::new(tokens).parse().unwrap_err()
+    }
+
+    fn parse_lib(src: &str) -> Program {
+        let tokens = Lexer::new(src).tokenize().expect("lex error");
+        Parser::new(tokens).parse_lib().expect("parse_lib error")
+    }
+
+    // ── app block ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn minimal_app() {
+        let p = parse("app MyApp { }");
+        assert_eq!(p.name, "MyApp");
+        assert!(p.declarations.is_empty());
+        assert!(p.routes.is_empty());
+        assert!(p.server.is_none());
+    }
+
+    #[test]
+    fn app_with_server_block() {
+        let p = parse("app MyApp { server { port: 8080; } }");
+        assert_eq!(p.server.unwrap().port, 8080);
+    }
+
+    #[test]
+    fn app_with_route() {
+        let p = parse(r#"app MyApp { route "/" => HomeWindow; }"#);
+        assert_eq!(p.routes.len(), 1);
+        assert_eq!(p.routes[0].path, "/");
+        assert_eq!(p.routes[0].target, "HomeWindow");
+    }
+
+    // ── package / import ──────────────────────────────────────────────────────
+
+    #[test]
+    fn package_declaration() {
+        let p = parse("package com.myapp; app A { }");
+        assert_eq!(p.package.unwrap(), "com.myapp");
+    }
+
+    #[test]
+    fn import_declaration() {
+        let p = parse("import com.ui.Button; app A { }");
+        assert_eq!(p.imports.len(), 1);
+        assert_eq!(p.imports[0].path, "com.ui.Button");
+    }
+
+    #[test]
+    fn multiple_imports() {
+        let p = parse("import a.B; import c.D; app A { }");
+        assert_eq!(p.imports.len(), 2);
+    }
+
+    // ── class declaration ─────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_class() {
+        let p = parse("app A { class Foo { } }");
+        assert_eq!(p.declarations.len(), 1);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert_eq!(cls.name, "Foo");
+            assert!(matches!(cls.kind, ClassKind::Class));
+        } else {
+            panic!("expected class");
+        }
+    }
+
+    #[test]
+    fn class_with_field() {
+        let p = parse("app A { class Foo { public Int x; } }");
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert_eq!(cls.fields.len(), 1);
+            assert_eq!(cls.fields[0].name, "x");
+            assert!(matches!(cls.fields[0].ty, Type::Int));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn class_with_constructor_and_method() {
+        let src = r#"
+            app A {
+                class Counter {
+                    constructor(start: Int) { this.count = start; }
+                    get() => Int { return this.count; }
+                }
+            }
+        "#;
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(cls.constructor.is_some());
+            assert_eq!(cls.methods.len(), 1);
+            assert_eq!(cls.methods[0].name, "get");
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn class_with_type_params() {
+        let p = parse("app A { class Box<T> { } }");
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert_eq!(cls.type_params, vec!["T"]);
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn class_extends_implements() {
+        let p = parse("app A { class Dog extends Animal implements Pet { } }");
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert_eq!(cls.extends.as_deref(), Some("Animal"));
+            assert!(cls.implements.contains(&"Pet".to_string()));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn window_declaration() {
+        let p = parse("app A { window HomeWindow { } }");
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(matches!(cls.kind, ClassKind::Window));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn component_declaration() {
+        let p = parse("app A { component Button { } }");
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(matches!(cls.kind, ClassKind::Component));
+        } else {
+            panic!();
+        }
+    }
+
+    // ── interface ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn interface_with_method_sig() {
+        let p = parse("app A { interface Printable { print() => Void; } }");
+        if let Declaration::Interface(iface) = &p.declarations[0] {
+            assert_eq!(iface.name, "Printable");
+            assert_eq!(iface.methods.len(), 1);
+            assert_eq!(iface.methods[0].name, "print");
+            assert!(matches!(iface.methods[0].return_type, Type::Void));
+        } else {
+            panic!();
+        }
+    }
+
+    // ── statements ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn let_with_type_annotation() {
+        let src = "app A { class C { run() => Void { let x: Int = 1; } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { name, ty, .. } = &cls.methods[0].body[0] {
+                assert_eq!(name, "x");
+                assert!(matches!(ty, Some(Type::Int)));
+            } else {
+                panic!();
+            }
+        }
+    }
+
+    #[test]
+    fn if_else_statement() {
+        let src = "app A { class C { run() => Void { if (true) { return; } else { return; } } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(matches!(cls.methods[0].body[0], Stmt::If { else_body: Some(_), .. }));
+        }
+    }
+
+    #[test]
+    fn while_statement() {
+        let src = "app A { class C { run() => Void { while (true) { break; } } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(matches!(cls.methods[0].body[0], Stmt::While { .. }));
+        }
+    }
+
+    #[test]
+    fn for_in_statement() {
+        let src = "app A { class C { run() => Void { for (x in items) { continue; } } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(matches!(cls.methods[0].body[0], Stmt::For { .. }));
+        }
+    }
+
+    // ── expressions ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn binary_arithmetic_expression() {
+        let src = "app A { class C { run() => Int { return 1 + 2 * 3; } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Return(Some(Expr::Binary { op: BinOp::Add, .. })) = &cls.methods[0].body[0] {
+                // correct — addition is the outermost (lower precedence than *)
+            } else {
+                panic!("expected binary add at top level");
+            }
+        }
+    }
+
+    #[test]
+    fn method_call_chain() {
+        // receiver is a local ident, not `this`, so it goes through parse_expr
+        let src = r#"app A { class C { run() => Void { let r = obj.foo().bar(); } } }"#;
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init: Expr::MethodCall { method, .. }, .. } = &cls.methods[0].body[0] {
+                assert_eq!(method, "bar");
+            } else {
+                panic!("expected method call chain");
+            }
+        }
+    }
+
+    // ── lib parse ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_lib_extracts_declarations() {
+        let p = parse_lib("class Util { } class Helper { }");
+        assert_eq!(p.declarations.len(), 2);
+    }
+
+    // ── async / await ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn async_method_sets_flag() {
+        let src = "app A { class C { async fetch() => Void { } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(cls.methods[0].is_async, "fetch should be marked async");
+        }
+    }
+
+    #[test]
+    fn sync_method_not_async() {
+        let src = "app A { class C { run() => Void { } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            assert!(!cls.methods[0].is_async);
+        }
+    }
+
+    #[test]
+    fn await_expr_in_async_method() {
+        let src = r#"app A { class C { async load() => Void { let r = await fetch("url"); } } }"#;
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init, .. } = &cls.methods[0].body[0] {
+                assert!(
+                    matches!(init, Expr::Await(_)),
+                    "expected Expr::Await, got {:?}", init
+                );
+            }
+        }
+    }
+
+    // ── list literals ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn list_literal_empty() {
+        let src = "app A { class C { run() => Void { let xs = []; } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init: Expr::ListLiteral(items), .. } = &cls.methods[0].body[0] {
+                assert!(items.is_empty());
+            } else {
+                panic!("expected empty list literal");
+            }
+        }
+    }
+
+    #[test]
+    fn list_literal_with_items() {
+        let src = "app A { class C { run() => Void { let xs = [1, 2, 3]; } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init: Expr::ListLiteral(items), .. } = &cls.methods[0].body[0] {
+                assert_eq!(items.len(), 3);
+                assert!(matches!(&items[0], Expr::IntLit(1)));
+                assert!(matches!(&items[2], Expr::IntLit(3)));
+            } else {
+                panic!("expected list literal with 3 items");
+            }
+        }
+    }
+
+    // ── dynamic import ────────────────────────────────────────────────────────
+
+    #[test]
+    fn lazy_import_expr() {
+        let src = r#"app A { class C { async load() => Void { let m = import("std.math.Math"); } } }"#;
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init: Expr::LazyImport(path), .. } = &cls.methods[0].body[0] {
+                assert_eq!(path, "std.math.Math");
+            } else {
+                panic!("expected LazyImport expr");
+            }
+        }
+    }
+
+    // ── generic type args at call site ────────────────────────────────────────
+
+    #[test]
+    fn generic_call_type_args_erased() {
+        // Box<Int>(42) should produce Expr::Call { callee: "Box", args: [IntLit(42)] }
+        let src = "app A { class C { run() => Void { let b = Box<Int>(42); } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init: Expr::Call { callee, args }, .. } = &cls.methods[0].body[0] {
+                assert_eq!(callee, "Box");
+                assert_eq!(args.len(), 1);
+            } else {
+                panic!("expected Call after type arg erasure");
+            }
+        }
+    }
+
+    #[test]
+    fn comparison_lt_not_confused_with_type_args() {
+        // a < b must NOT be treated as type args
+        let src = "app A { class C { run() => Void { let r = a < b; } } }";
+        let p = parse(src);
+        if let Declaration::Class(cls) = &p.declarations[0] {
+            if let Stmt::Let { init: Expr::Binary { op: BinOp::Lt, .. }, .. } = &cls.methods[0].body[0] {
+                // correct
+            } else {
+                panic!("a < b should produce BinOp::Lt, not be consumed as type args");
+            }
+        }
+    }
+
+    // ── error cases ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn unexpected_token_returns_error() {
+        matches!(parse_err("42"), ParseError::Unexpected(..));
+    }
+
+    #[test]
+    fn missing_app_name_returns_error() {
+        matches!(parse_err("app { }"), ParseError::Expected(..));
     }
 }

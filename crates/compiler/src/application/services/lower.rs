@@ -109,6 +109,7 @@ fn lower_method_with_env(
         return_ty: lower_type(&m.return_type),
         body: lower_stmts_in_scope(&m.body, &env),
         is_public: m.visibility == Visibility::Public,
+        is_async: m.is_async,
     }
 }
 
@@ -290,6 +291,9 @@ fn lower_expr(expr: &Expr) -> IrExpr {
             },
             operand: Box::new(lower_expr(expr)),
         },
+        Expr::Await(inner) => IrExpr::Await(Box::new(lower_expr(inner))),
+        Expr::ListLiteral(items) => IrExpr::List(items.iter().map(lower_expr).collect()),
+        Expr::LazyImport(path) => IrExpr::DynamicImport(path.clone()),
     }
 }
 

@@ -1,6 +1,7 @@
 use super::load_project;
 use crate::application::{project::NexaProject, updater};
 use crate::infrastructure::ui;
+// nexa_compiler is an internal workspace crate; see its lib.rs for the semver-exempt notice.
 use nexa_compiler::{compile_project_file, compile_to_bundle, decode_nxb, CodeGenerator};
 use nexa_server::{build_router, AppState};
 use notify::{Config as WatchConfig, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -394,5 +395,160 @@ pub(super) fn save_build_lock(
             }
         }
         Err(e) => ui::warn(format!("could not serialize nexa-build.lock: {e}")),
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use tempfile::TempDir;
+
+    fn sha256_hex(content: &[u8]) -> String {
+        let mut h = Sha256::new();
+        h.update(content);
+        hex::encode(h.finalize())
+    }
+
+    // ── fingerprint_module_sources ────────────────────────────────────────────
+
+    #[test]
+    fn fingerprint_empty_dir_returns_empty() {
+        let tmp = TempDir::new().unwrap();
+        let entries = fingerprint_module_sources(tmp.path(), tmp.path());
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn fingerprint_ignores_non_nx_files() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("README.md"), "hello").unwrap();
+        fs::write(tmp.path().join("config.json"), "{}").unwrap();
+        fs::write(tmp.path().join("script.js"), "x=1").unwrap();
+        let entries = fingerprint_module_sources(tmp.path(), tmp.path());
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn fingerprint_hashes_nx_files_correctly() {
+        let tmp = TempDir::new().unwrap();
+        let content = b"app MyApp {}";
+        fs::write(tmp.path().join("app.nx"), content).unwrap();
+
+        let entries = fingerprint_module_sources(tmp.path(), tmp.path());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].sha256, sha256_hex(content));
+    }
+
+    #[test]
+    fn fingerprint_results_are_sorted_by_path() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("z_last.nx"), "z").unwrap();
+        fs::write(tmp.path().join("a_first.nx"), "a").unwrap();
+        fs::write(tmp.path().join("m_middle.nx"), "m").unwrap();
+
+        let entries = fingerprint_module_sources(tmp.path(), tmp.path());
+        assert_eq!(entries.len(), 3);
+        let paths: Vec<_> = entries.iter().map(|e| e.path.as_str()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort();
+        assert_eq!(paths, sorted);
+    }
+
+    #[test]
+    fn fingerprint_recurses_into_subdirectories() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("views");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(tmp.path().join("app.nx"), "root").unwrap();
+        fs::write(sub.join("home.nx"), "home").unwrap();
+
+        let entries = fingerprint_module_sources(tmp.path(), tmp.path());
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn fingerprint_uses_relative_paths_from_project_root() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("modules").join("core").join("src").join("main");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("app.nx"), "x").unwrap();
+
+        let entries = fingerprint_module_sources(&src, tmp.path());
+        assert_eq!(entries.len(), 1);
+        // Path should be relative, not absolute
+        assert!(!entries[0].path.starts_with('/'));
+        assert!(entries[0].path.contains("app.nx"));
+    }
+
+    // ── save_build_lock ───────────────────────────────────────────────────────
+
+    #[test]
+    fn save_build_lock_creates_lock_file() {
+        let tmp = TempDir::new().unwrap();
+        let entry = BuildLockEntry {
+            path: "modules/core/src/main/app.nx".to_string(),
+            sha256: "abc123".to_string(),
+        };
+        save_build_lock(tmp.path(), &[("core", vec![entry])]);
+
+        assert!(tmp.path().join("nexa-build.lock").exists());
+    }
+
+    #[test]
+    fn save_build_lock_file_is_valid_json() {
+        let tmp = TempDir::new().unwrap();
+        save_build_lock(tmp.path(), &[("core", vec![])]);
+
+        let raw = fs::read_to_string(tmp.path().join("nexa-build.lock")).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(val.get("nexa_version").is_some());
+        assert!(val.get("modules").is_some());
+    }
+
+    #[test]
+    fn save_build_lock_stores_module_entries() {
+        let tmp = TempDir::new().unwrap();
+        let entry = BuildLockEntry {
+            path: "modules/core/src/main/app.nx".to_string(),
+            sha256: "deadbeef".to_string(),
+        };
+        save_build_lock(tmp.path(), &[("core", vec![entry.clone()])]);
+
+        let raw = fs::read_to_string(tmp.path().join("nexa-build.lock")).unwrap();
+        let lock: BuildLockfile = serde_json::from_str(&raw).unwrap();
+        let core_entries = lock.modules.get("core").unwrap();
+        assert_eq!(core_entries.len(), 1);
+        assert_eq!(core_entries[0], entry);
+    }
+
+    #[test]
+    fn save_build_lock_merges_with_existing_modules() {
+        let tmp = TempDir::new().unwrap();
+
+        // First call: save "core"
+        save_build_lock(
+            tmp.path(),
+            &[("core", vec![BuildLockEntry {
+                path: "core/app.nx".to_string(),
+                sha256: "hash1".to_string(),
+            }])],
+        );
+
+        // Second call: save "api" — should not clobber "core"
+        save_build_lock(
+            tmp.path(),
+            &[("api", vec![BuildLockEntry {
+                path: "api/app.nx".to_string(),
+                sha256: "hash2".to_string(),
+            }])],
+        );
+
+        let raw = fs::read_to_string(tmp.path().join("nexa-build.lock")).unwrap();
+        let lock: BuildLockfile = serde_json::from_str(&raw).unwrap();
+        assert!(lock.modules.contains_key("core"), "core entries should be preserved");
+        assert!(lock.modules.contains_key("api"), "api entries should be added");
     }
 }

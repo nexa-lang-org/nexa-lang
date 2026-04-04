@@ -1743,6 +1743,7 @@ dependencies = [
  "bincode",
  "serde",
  "sha2",
+ "tempfile",
  "thiserror 1.0.69",
  "tracing",
 ]

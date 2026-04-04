@@ -69,7 +69,13 @@ impl CodeGenerator {
 
         for method in &cls.methods {
             let params: Vec<_> = method.params.iter().map(|p| p.name.as_str()).collect();
-            out.push_str(&format!("  {}({}) {{\n", method.name, params.join(", ")));
+            let async_prefix = if method.is_async { "async " } else { "" };
+            out.push_str(&format!(
+                "  {}{}({}) {{\n",
+                async_prefix,
+                method.name,
+                params.join(", ")
+            ));
             for stmt in &method.body {
                 out.push_str(&self.emit_stmt(stmt, 2)?);
             }
@@ -171,6 +177,12 @@ impl CodeGenerator {
                 let op_str = match op { IrUnOp::Not => "!", IrUnOp::Neg => "-" };
                 Ok(format!("({op_str}{})", self.emit_expr(operand)?))
             }
+            IrExpr::Await(inner) => Ok(format!("(await {})", self.emit_expr(inner)?)),
+            IrExpr::List(items) => {
+                let parts = self.emit_exprs(items)?;
+                Ok(format!("[{parts}]"))
+            }
+            IrExpr::DynamicImport(path) => Ok(format!("import(\"{path}\")")),
         }
     }
 
@@ -299,6 +311,33 @@ function Paragraph(text) {
   el.textContent = String(text);
   return el;
 }
+
+// ── List<T> runtime ───────────────────────────────────────────────
+/**
+ * _NexaList — generic list wrapper.
+ * Exposes the typed API that Nexa List<T> methods compile to:
+ *   push(item), pop(), get(i), length(), isEmpty(), contains(item),
+ *   forEach(fn), map(fn), filter(fn), find(fn), slice(from,to)
+ * The underlying storage is a plain JS array so V8 handles GC.
+ */
+class _NexaList {
+  constructor(items = []) { this._data = Array.isArray(items) ? [...items] : [items]; }
+  push(item)       { this._data.push(item); return this; }
+  pop()            { return this._data.pop(); }
+  get(i)           { return this._data[i]; }
+  length()         { return this._data.length; }
+  isEmpty()        { return this._data.length === 0; }
+  contains(item)   { return this._data.includes(item); }
+  forEach(fn)      { this._data.forEach(fn); }
+  map(fn)          { return new _NexaList(this._data.map(fn)); }
+  filter(fn)       { return new _NexaList(this._data.filter(fn)); }
+  find(fn)         { return this._data.find(fn); }
+  slice(from, to)  { return new _NexaList(this._data.slice(from, to)); }
+  [Symbol.iterator]() { return this._data[Symbol.iterator](); }
+  toArray()        { return [...this._data]; }
+}
+/** List(items...)  — constructor function matching Nexa syntax. */
+function List(...items) { return new _NexaList(items); }
 
 // ── Logger ────────────────────────────────────────────────────────
 /** log(value, ...) — write to the browser console and an on-page log panel. */

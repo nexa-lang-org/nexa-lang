@@ -21,6 +21,9 @@ pub enum Token {
     Constructor,
     Return,
     This,
+    // ── Async ──────────────────────────────────────────────────────────────
+    Async,
+    Await,
     // ── Control flow ───────────────────────────────────────────────────────
     If,
     Else,
@@ -41,6 +44,8 @@ pub enum Token {
     RBrace,
     LParen,
     RParen,
+    LBracket, // [
+    RBracket, // ]
     LAngle,   // <
     RAngle,   // >
     FatArrow, // =>
@@ -226,6 +231,8 @@ impl Lexer {
             "while" => Token::While,
             "break" => Token::Break,
             "continue" => Token::Continue,
+            "async" => Token::Async,
+            "await" => Token::Await,
             "let" => Token::Let,
             "in" => Token::In,
             "Int" => Token::TInt,
@@ -237,6 +244,14 @@ impl Lexer {
             "false" => Token::BoolLit(false),
             _ => Token::Ident(s),
         }
+    }
+
+    /// Convenience: tokenize and strip the trailing `Eof`.
+    #[cfg(test)]
+    fn tokens(source: &str) -> Vec<Token> {
+        let mut l = Lexer::new(source);
+        let spanned = l.tokenize().expect("lex error");
+        spanned.into_iter().map(|s| s.token).filter(|t| *t != Token::Eof).collect()
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Spanned>, LexError> {
@@ -257,6 +272,14 @@ impl Lexer {
                 Some('"') => self.read_string()?,
                 Some(c) if c.is_ascii_digit() => self.read_number(),
                 Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
+                Some('[') => {
+                    self.advance();
+                    Token::LBracket
+                }
+                Some(']') => {
+                    self.advance();
+                    Token::RBracket
+                }
                 Some('{') => {
                     self.advance();
                     Token::LBrace
@@ -387,5 +410,285 @@ impl Lexer {
             });
         }
         Ok(tokens)
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    fn lex(src: &str) -> Vec<Token> {
+        Lexer::tokens(src)
+    }
+
+    fn lex_err(src: &str) -> LexError {
+        Lexer::new(src).tokenize().unwrap_err()
+    }
+
+    // ── empty / whitespace ────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_source_produces_no_tokens() {
+        assert!(lex("").is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_produces_no_tokens() {
+        assert!(lex("   \t\n  ").is_empty());
+    }
+
+    // ── comments ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn line_comment_is_skipped() {
+        assert!(lex("// this is a comment").is_empty());
+    }
+
+    #[test]
+    fn comment_followed_by_token() {
+        assert_eq!(lex("// comment\n42"), vec![Token::IntLit(42)]);
+    }
+
+    // ── identifiers ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn plain_identifier() {
+        assert_eq!(lex("foo"), vec![Token::Ident("foo".into())]);
+    }
+
+    #[test]
+    fn underscore_identifier() {
+        assert_eq!(lex("_bar"), vec![Token::Ident("_bar".into())]);
+    }
+
+    #[test]
+    fn mixed_case_identifier() {
+        assert_eq!(lex("MyClass"), vec![Token::Ident("MyClass".into())]);
+    }
+
+    #[test]
+    fn identifier_with_digits() {
+        assert_eq!(lex("x1"), vec![Token::Ident("x1".into())]);
+    }
+
+    // ── integer literals ──────────────────────────────────────────────────────
+
+    #[test]
+    fn integer_zero() {
+        assert_eq!(lex("0"), vec![Token::IntLit(0)]);
+    }
+
+    #[test]
+    fn integer_positive() {
+        assert_eq!(lex("42"), vec![Token::IntLit(42)]);
+    }
+
+    #[test]
+    fn large_integer() {
+        assert_eq!(lex("1000000"), vec![Token::IntLit(1_000_000)]);
+    }
+
+    // ── boolean literals ──────────────────────────────────────────────────────
+
+    #[test]
+    fn bool_true() {
+        assert_eq!(lex("true"), vec![Token::BoolLit(true)]);
+    }
+
+    #[test]
+    fn bool_false() {
+        assert_eq!(lex("false"), vec![Token::BoolLit(false)]);
+    }
+
+    // ── string literals ───────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(lex(r#""""#), vec![Token::StringLit(String::new())]);
+    }
+
+    #[test]
+    fn simple_string() {
+        assert_eq!(lex(r#""hello""#), vec![Token::StringLit("hello".into())]);
+    }
+
+    #[test]
+    fn string_with_escape_newline() {
+        assert_eq!(lex(r#""a\nb""#), vec![Token::StringLit("a\nb".into())]);
+    }
+
+    #[test]
+    fn string_with_escape_tab() {
+        assert_eq!(lex(r#""a\tb""#), vec![Token::StringLit("a\tb".into())]);
+    }
+
+    #[test]
+    fn string_with_escaped_quote() {
+        assert_eq!(lex(r#""say \"hi\"""#), vec![Token::StringLit("say \"hi\"".into())]);
+    }
+
+    #[test]
+    fn unterminated_string_returns_error() {
+        matches!(lex_err(r#""hello"#), LexError::UnterminatedString(_));
+    }
+
+    // ── keywords ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn all_control_flow_keywords() {
+        assert_eq!(
+            lex("if else for while break continue let in return"),
+            vec![
+                Token::If, Token::Else, Token::For, Token::While,
+                Token::Break, Token::Continue, Token::Let, Token::In,
+                Token::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn all_oo_keywords() {
+        assert_eq!(
+            lex("class interface component window public private extends implements constructor this"),
+            vec![
+                Token::Class, Token::Interface, Token::Component, Token::Window,
+                Token::Public, Token::Private, Token::Extends, Token::Implements,
+                Token::Constructor, Token::This,
+            ]
+        );
+    }
+
+    #[test]
+    fn all_app_keywords() {
+        assert_eq!(
+            lex("app server route package import"),
+            vec![Token::App, Token::Server, Token::Route, Token::Package, Token::Import]
+        );
+    }
+
+    #[test]
+    fn type_keywords() {
+        assert_eq!(
+            lex("Int String Bool Void List"),
+            vec![Token::TInt, Token::TString, Token::TBool, Token::TVoid, Token::TList]
+        );
+    }
+
+    // ── operators ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn arithmetic_operators() {
+        assert_eq!(
+            lex("+ - * / %"),
+            vec![Token::Plus, Token::Minus, Token::Star, Token::Slash, Token::Percent]
+        );
+    }
+
+    #[test]
+    fn comparison_operators() {
+        assert_eq!(
+            lex("== != < > <= >="),
+            vec![
+                Token::EqualEqual, Token::BangEqual,
+                Token::LAngle, Token::RAngle,
+                Token::LessEqual, Token::GreaterEqual,
+            ]
+        );
+    }
+
+    #[test]
+    fn logical_operators() {
+        assert_eq!(lex("&& || !"), vec![Token::And, Token::Or, Token::Bang]);
+    }
+
+    #[test]
+    fn assignment_and_fat_arrow() {
+        assert_eq!(lex("= =>"), vec![Token::Equals, Token::FatArrow]);
+    }
+
+    // ── symbols ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn punctuation_symbols() {
+        assert_eq!(
+            lex("{ } ( ) ; : , ."),
+            vec![
+                Token::LBrace, Token::RBrace,
+                Token::LParen, Token::RParen,
+                Token::Semicolon, Token::Colon,
+                Token::Comma, Token::Dot,
+            ]
+        );
+    }
+
+    // ── error cases ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn unexpected_char_returns_error() {
+        matches!(lex_err("@"), LexError::UnexpectedChar('@', _));
+    }
+
+    #[test]
+    fn single_ampersand_returns_error() {
+        matches!(lex_err("&"), LexError::UnexpectedChar('&', _));
+    }
+
+    #[test]
+    fn single_pipe_returns_error() {
+        matches!(lex_err("|"), LexError::UnexpectedChar('|', _));
+    }
+
+    // ── span tracking ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn span_line_and_col_are_tracked() {
+        let mut l = Lexer::new("foo\nbar");
+        let tokens = l.tokenize().unwrap();
+        assert_eq!(tokens[0].span.line, 1);
+        assert_eq!(tokens[0].span.col, 1);
+        assert_eq!(tokens[1].span.line, 2);
+        assert_eq!(tokens[1].span.col, 1);
+    }
+
+    // ── realistic snippet ─────────────────────────────────────────────────────
+
+    #[test]
+    fn class_declaration_snippet() {
+        let src = "class Foo { public x: Int; }";
+        assert_eq!(
+            lex(src),
+            vec![
+                Token::Class,
+                Token::Ident("Foo".into()),
+                Token::LBrace,
+                Token::Public,
+                Token::Ident("x".into()),
+                Token::Colon,
+                Token::TInt,
+                Token::Semicolon,
+                Token::RBrace,
+            ]
+        );
+    }
+
+    #[test]
+    fn let_assignment_snippet() {
+        let src = "let x: Int = 42;";
+        assert_eq!(
+            lex(src),
+            vec![
+                Token::Let,
+                Token::Ident("x".into()),
+                Token::Colon,
+                Token::TInt,
+                Token::Equals,
+                Token::IntLit(42),
+                Token::Semicolon,
+            ]
+        );
     }
 }
