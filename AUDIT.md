@@ -135,7 +135,7 @@ Fichier maximal : 382 LOC (était 2 253). Architecture : `impl WatGen` réparti 
 
 ---
 
-## 5. Infrastructure / CI — 95 / 100
+## 5. Infrastructure / CI — 98 / 100
 
 ### ✅ Ce qui est bien fait
 
@@ -144,10 +144,10 @@ Fichier maximal : 382 LOC (était 2 253). Architecture : `impl WatGen` réparti 
 - Coverage `cargo-tarpaulin` (rapport Cobertura)
 - Docker non-root, base `debian:12-slim`
 - SLSA provenance sur les binaires de release
+- **CI WASM ✅** : job `wasm-validate` dans `snapshot.yml` — installe `wabt` + `wasmtime`, exécute `validate_wasm_binary_counter` + `validate_wasm_binary_gc_v2`; `docker` et `build` dépendent de ce job
 
-### 🔄 En cours (v6)
+### ⚠️ Reste à traiter
 
-- **CI WASM** : test Rust `wasm_codegen::tests::validate_wasm_binary` appelle `wat2wasm --enable-bulk-memory` + `wasmtime run` — step ajouté dans `snapshot.yml`
 - Pas de smoke test `docker-compose up` pour le registry (non bloquant)
 
 ---
