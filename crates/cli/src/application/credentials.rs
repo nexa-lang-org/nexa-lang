@@ -51,10 +51,23 @@ pub fn save(registry: &str, token: &str) {
         token: token.to_string(),
     };
     let json = serde_json::to_string_pretty(&creds).expect("serialize credentials");
-    fs::write(&path, json).unwrap_or_else(|e| {
+    fs::write(&path, &json).unwrap_or_else(|e| {
         eprintln!(
             "warning: could not save credentials to {}: {e}",
             path.display()
         );
     });
+    // Restrict file to owner-read/write only (0600) so other users on the same
+    // system cannot read the bearer token.  Best-effort: failure is logged but
+    // does not abort — the credentials are already written.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(&path, fs::Permissions::from_mode(0o600)) {
+            eprintln!(
+                "warning: could not restrict permissions on {}: {e}",
+                path.display()
+            );
+        }
+    }
 }

@@ -36,6 +36,10 @@ impl AuthService {
     }
 
     pub async fn register(&self, email: &str, password: &str) -> Result<String> {
+        // Normalize to lowercase so Alice@example.com and alice@example.com
+        // are treated as the same account (prevents squatting attacks).
+        let email = email.to_lowercase();
+        let email = email.as_str();
         if !valid_email(email) {
             return Err(anyhow!("invalid email address"));
         }
@@ -51,6 +55,8 @@ impl AuthService {
     }
 
     pub async fn login(&self, email: &str, password: &str) -> Result<String> {
+        let email = email.to_lowercase();
+        let email = email.as_str();
         let user = self
             .user_store
             .find_by_email(email)

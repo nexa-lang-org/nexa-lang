@@ -11,6 +11,7 @@
 //!    current platform, verifies its SHA-256 checksum, and atomically replaces
 //!    the running executable.
 
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
@@ -20,6 +21,33 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // ── compile-time version (set by build.rs, overridable via NEXA_RELEASE_VERSION)
 pub const CURRENT_VERSION: &str = env!("NEXA_BUILD_VERSION");
 const REPO: &str = "nexa-lang-org/nexa-lang";
+
+// ── Ed25519 release signing key ───────────────────────────────────────────────
+//
+// This is the *public* verification key for release binaries.
+// The matching private key is stored as a GitHub Actions secret
+// (NEXA_RELEASE_SIGNING_KEY) and is never committed to the repository.
+//
+// To rotate the key:
+//   1. Generate a new keypair:  `nexa-keygen` or `openssl genpkey -algorithm ED25519`
+//   2. Update the NEXA_RELEASE_PUBKEY_HEX build-time env var in CI.
+//   3. Update the GitHub Actions secret with the new private key.
+//   4. Cut a new release — all binaries from that point onward are signed
+//      with the new key.
+//
+// The placeholder below (all zeros) disables signature verification in dev
+// builds.  The CI workflow substitutes the real key via a build-time env var
+// `NEXA_RELEASE_PUBKEY_HEX` (64 hex chars = 32 bytes).
+
+// Sentinel value: all-zero public key → signature verification is skipped.
+const ZERO_PUBKEY_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+// option_env! returns None (not a compile error) when the env var is absent,
+// so developer builds compile fine without setting NEXA_RELEASE_PUBKEY_HEX.
+const RELEASE_SIGNING_PUBKEY_HEX: &str = match option_env!("NEXA_RELEASE_PUBKEY_HEX") {
+    Some(k) => k,
+    None => ZERO_PUBKEY_HEX,
+};
 const GITHUB_API: &str = "https://api.github.com";
 // Refresh the cached update check at most once every 24 hours
 const CACHE_TTL_SECS: u64 = 86_400;
@@ -84,6 +112,9 @@ struct UpdateCache {
     download_url: String,
     /// Checksum download URL (may be empty).
     checksum_url: String,
+    /// Ed25519 signature file URL — `<asset>.sig` (may be empty for older releases).
+    #[serde(default)]
+    sig_url: String,
 }
 
 /// Information about an available update, ready to apply.
@@ -92,6 +123,9 @@ pub struct UpdateInfo {
     pub version: String,
     pub download_url: String,
     pub checksum_url: String,
+    /// Ed25519 signature file URL — `<asset>.sig`.  Empty if the release predates
+    /// signature support; in that case only the SHA-256 checksum is verified.
+    pub sig_url: String,
 }
 
 // ── semver helpers ────────────────────────────────────────────────────────────
@@ -243,6 +277,13 @@ pub fn check_for_update(channel: &str) -> Option<UpdateInfo> {
     let asset = release.assets.iter().find(|a| a.name == asset_name)?;
     let checksum_name = format!("{}.sha256", asset_name);
     let checksum_asset = release.assets.iter().find(|a| a.name == checksum_name)?;
+    let sig_name = format!("{}.sig", asset_name);
+    let sig_url = release
+        .assets
+        .iter()
+        .find(|a| a.name == sig_name)
+        .map(|a| a.browser_download_url.clone())
+        .unwrap_or_default();
 
     // For snapshot, derive a human-readable version from the release title SHA.
     let version = if channel == "snapshot" {
@@ -259,6 +300,7 @@ pub fn check_for_update(channel: &str) -> Option<UpdateInfo> {
         version,
         download_url: asset.browser_download_url.clone(),
         checksum_url: checksum_asset.browser_download_url.clone(),
+        sig_url,
     })
 }
 
@@ -308,12 +350,20 @@ pub fn check_and_notify(channel: &str) {
                             .find(|a| a.name == checksum_name)
                             .map(|a| a.browser_download_url.clone())
                             .unwrap_or_default();
+                        let sig_name = format!("{}.sig", asset_name);
+                        let sig_url = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == sig_name)
+                            .map(|a| a.browser_download_url.clone())
+                            .unwrap_or_default();
                         UpdateCache {
                             checked_at: now_secs(),
                             channel: channel.clone(),
                             latest_version: release.tag_name.trim_start_matches('v').to_string(),
                             download_url: asset.browser_download_url.clone(),
                             checksum_url,
+                            sig_url,
                         }
                     } else {
                         // Release exists but no binary for this platform
@@ -382,6 +432,58 @@ fn verify_sha256(archive: &PathBuf, checksum_file: &PathBuf) -> Result<(), Strin
         ));
     }
     Ok(())
+}
+
+/// Inner Ed25519 verification logic (injectable key for testing).
+///
+/// Returns `Ok(())` when:
+///   - `pubkey_hex` is the all-zero sentinel (dev / unsigned builds), **or**
+///   - The signature is valid.
+///
+/// Returns `Err(String)` when the signature is present but invalid.
+fn verify_ed25519_with_key(
+    archive: &PathBuf,
+    sig_file: &PathBuf,
+    pubkey_hex: &str,
+) -> Result<(), String> {
+    // Skip when the zero sentinel is active (dev builds / releases without a key).
+    if pubkey_hex == ZERO_PUBKEY_HEX {
+        return Ok(());
+    }
+
+    // Decode the 32-byte public key from hex.
+    let key_bytes = hex::decode(pubkey_hex)
+        .map_err(|e| format!("invalid built-in public key hex: {e}"))?;
+    let key_array: [u8; 32] = key_bytes
+        .try_into()
+        .map_err(|_| "built-in public key must be exactly 32 bytes".to_string())?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&key_array).map_err(|e| format!("invalid public key: {e}"))?;
+
+    // Read the 64-byte raw signature.
+    let sig_bytes = fs::read(sig_file).map_err(|e| format!("cannot read .sig file: {e}"))?;
+    if sig_bytes.len() != 64 {
+        return Err(format!(
+            "signature file must be exactly 64 bytes, got {}",
+            sig_bytes.len()
+        ));
+    }
+    let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
+    let signature = Signature::from_bytes(&sig_array);
+
+    // Read the archive and verify.
+    let archive_bytes = fs::read(archive).map_err(|e| format!("cannot read archive: {e}"))?;
+    verifying_key
+        .verify_strict(&archive_bytes, &signature)
+        .map_err(|_| {
+            "Ed25519 signature verification FAILED — binary may have been tampered with".to_string()
+        })
+}
+
+/// Verify the Ed25519 detached signature of `archive` using the compiled-in
+/// release public key (`RELEASE_SIGNING_PUBKEY_HEX`).
+fn verify_ed25519_sig(archive: &PathBuf, sig_file: &PathBuf) -> Result<(), String> {
+    verify_ed25519_with_key(archive, sig_file, RELEASE_SIGNING_PUBKEY_HEX)
 }
 
 /// Extract `nexa` (or `nexa.exe`) from the archive into `dest_dir`.
@@ -461,6 +563,20 @@ pub fn perform_update(info: &UpdateInfo) -> Result<(), String> {
     verify_sha256(&archive, &checksum_file)?;
     println!("  \x1b[1;32m✓\x1b[0m Checksum OK");
 
+    // Ed25519 signature — only if the release provides a .sig sidecar.
+    // Releases predating signature support have an empty sig_url; we fall back
+    // to SHA-256-only verification in that case.
+    let sig_file: Option<PathBuf> = if !info.sig_url.is_empty() {
+        let sig_name = format!("{}.sig", asset_name);
+        println!("  Verifying Ed25519 signature…");
+        let path = download_to_temp(&info.sig_url, &sig_name)?;
+        verify_ed25519_sig(&archive, &path)?;
+        println!("  \x1b[1;32m✓\x1b[0m Signature OK");
+        Some(path)
+    } else {
+        None
+    };
+
     println!("  Extracting binary…");
     let tmp_dir = std::env::temp_dir().join("nexa-update");
     let new_bin = extract_binary(&archive, &tmp_dir)?;
@@ -471,6 +587,9 @@ pub fn perform_update(info: &UpdateInfo) -> Result<(), String> {
     // Clean up temp files
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_file(&checksum_file);
+    if let Some(ref p) = sig_file {
+        let _ = fs::remove_file(p);
+    }
     let _ = fs::remove_file(&new_bin);
 
     // Invalidate the update cache so we don't nag again immediately
@@ -563,6 +682,96 @@ mod tests {
         assert!(is_newer("1.0.0", "0.99.99"));
         assert!(!is_newer("v0.1.0", "0.1.0"));
         assert!(!is_newer("v0.0.9", "0.1.0"));
+    }
+
+    // ── Ed25519 tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn ed25519_zero_key_skips_verification() {
+        // Zero sentinel must skip all I/O — non-existent paths must not cause errors.
+        let fake = PathBuf::from("/nonexistent/archive.tar.gz");
+        let fake_sig = PathBuf::from("/nonexistent/archive.tar.gz.sig");
+        assert_eq!(
+            verify_ed25519_with_key(&fake, &fake_sig, ZERO_PUBKEY_HEX),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn ed25519_valid_signature_accepted() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use rand::rngs::OsRng;
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let payload = b"nexa-release-binary-payload";
+        let signature = signing_key.sign(payload);
+
+        let tmp = std::env::temp_dir().join("nexa-test-ed25519");
+        fs::create_dir_all(&tmp).unwrap();
+        let archive_path = tmp.join("test.tar.gz");
+        let sig_path = tmp.join("test.tar.gz.sig");
+
+        fs::write(&archive_path, payload).unwrap();
+        fs::write(&sig_path, signature.to_bytes()).unwrap();
+
+        let result = verify_ed25519_with_key(&archive_path, &sig_path, &pubkey_hex);
+        let _ = fs::remove_file(&archive_path);
+        let _ = fs::remove_file(&sig_path);
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn ed25519_wrong_signature_rejected() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use rand::rngs::OsRng;
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let payload = b"nexa-release-binary-payload";
+        // Sign different content → signature is wrong for payload
+        let signature = signing_key.sign(b"different-content");
+
+        let tmp = std::env::temp_dir().join("nexa-test-ed25519-bad");
+        fs::create_dir_all(&tmp).unwrap();
+        let archive_path = tmp.join("test.tar.gz");
+        let sig_path = tmp.join("test.tar.gz.sig");
+
+        fs::write(&archive_path, payload).unwrap();
+        fs::write(&sig_path, signature.to_bytes()).unwrap();
+
+        let result = verify_ed25519_with_key(&archive_path, &sig_path, &pubkey_hex);
+        let _ = fs::remove_file(&archive_path);
+        let _ = fs::remove_file(&sig_path);
+        assert!(result.is_err(), "tampered binary must be rejected");
+    }
+
+    #[test]
+    fn ed25519_wrong_sig_size_rejected() {
+        use ed25519_dalek::SigningKey;
+        use rand::rngs::OsRng;
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let tmp = std::env::temp_dir().join("nexa-test-ed25519-sz");
+        fs::create_dir_all(&tmp).unwrap();
+        let archive_path = tmp.join("test.tar.gz");
+        let sig_path = tmp.join("test.tar.gz.sig");
+
+        fs::write(&archive_path, b"payload").unwrap();
+        fs::write(&sig_path, b"too-short").unwrap(); // not 64 bytes
+
+        let result = verify_ed25519_with_key(&archive_path, &sig_path, &pubkey_hex);
+        let _ = fs::remove_file(&archive_path);
+        let _ = fs::remove_file(&sig_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("64 bytes"));
     }
 
     #[test]
