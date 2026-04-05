@@ -51,6 +51,8 @@ pub fn decode_nxb(bytes: &[u8]) -> Result<Program, PackageError> {
             supported: NXB_FORMAT_VERSION,
         });
     }
+    // bincode v2: decode_from_slice always returns Result — it never panics on
+    // corrupt data. Any malformed payload is propagated as PackageError::Decode.
     let config = bincode::config::standard();
     let (program, _): (Program, usize) = bincode::serde::decode_from_slice(&bytes[4..], config)?;
     Ok(program)
@@ -114,5 +116,13 @@ mod tests {
             decode_nxb(&bytes),
             Err(PackageError::FormatVersion { found: 0, .. })
         ));
+    }
+
+    #[test]
+    fn decode_corrupted_payload_returns_error_not_panic() {
+        // Valid magic + version, but payload is garbage bytes.
+        // bincode v2 must return Err(Decode), never panic.
+        let corrupt = b"NXB\x01\xff\xff\xff\xff\xff\xff\xff\xff";
+        assert!(matches!(decode_nxb(corrupt), Err(PackageError::Decode(_))));
     }
 }
