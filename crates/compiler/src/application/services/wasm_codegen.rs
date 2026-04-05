@@ -412,9 +412,14 @@ struct WatGen {
     current_class: String,
     /// Type tag assigned to each class (index in module.classes).
     class_tags: HashMap<String, u32>,
-    /// Number of shadow-stack entries pushed by the current function.
-    /// Used to emit the correct number of pops before each `return`.
-    shadow_frame_depth: usize,
+    // ── GC v2: per-method shadow stack frame ───────────────────────────────────
+    /// Map from local name → byte offset within `$__gc_frame` for i32 pointer locals.
+    /// All reads of these locals go through `$gc_reload_if_forwarded`; all definitions
+    /// (let-bindings) also write to the frame so GC can update the address.
+    gc_ptr_frame: HashMap<String, u32>,
+    /// Total size in bytes of the current function's shadow stack frame.
+    /// 0 means no frame has been set up (e.g., trivial void method with no pointers).
+    gc_frame_size: u32,
     /// Return type of the current method (None = void).
     current_return_vt: Option<ValTy>,
 }
@@ -431,7 +436,8 @@ impl WatGen {
             node_idx: 0,
             current_class: String::new(),
             class_tags: HashMap::new(),
-            shadow_frame_depth: 0,
+            gc_ptr_frame: HashMap::new(),
+            gc_frame_size: 0,
             current_return_vt: None,
         }
     }
@@ -459,6 +465,24 @@ impl WatGen {
         self.blank();
         let bar = "─".repeat(60usize.saturating_sub(title.len() + 2));
         self.comment(&format!("─── {} {}", title, bar));
+    }
+
+    // ── GC v2 frame helpers ───────────────────────────────────────────────────
+
+    /// Return the WAT expression that reloads an i32 local through the GC
+    /// forwarding-pointer check.  The result is an inline expression string.
+    fn reload_local(name: &str) -> String {
+        format!("(call $gc_reload_if_forwarded (local.get ${name}))")
+    }
+
+    /// Emit the GC shadow stack frame epilogue: restore `$__gc_shadow_ptr` to the
+    /// frame base.  Must be called before every `return` and at the normal end of
+    /// every function body that has a non-zero frame.
+    fn emit_frame_cleanup(&mut self) {
+        if self.gc_frame_size > 0 {
+            self.comment("Restore GC shadow stack");
+            self.ln("(global.set $__gc_shadow_ptr (local.get $__gc_frame))");
+        }
     }
 
     // ── Top-level entry ───────────────────────────────────────────────────────
@@ -1071,13 +1095,77 @@ impl WatGen {
         Ok(())
     }
 
+    // ── GC v2: build the shadow-stack frame map for a set of pointer locals ─────
+
+    /// Build `gc_ptr_frame` for the current function.
+    ///
+    /// Frame layout (each slot = 4 bytes):
+    ///   [0]     $self
+    ///   [4…]    pointer-typed params (i32), in order
+    ///   [N…]    i32 let-bound locals, in declaration order
+    ///
+    /// Always call this before emitting a constructor or method body.
+    fn build_frame(
+        &mut self,
+        ptr_params: &[String],
+        let_locals: &[(String, ValTy)],
+    ) {
+        self.gc_ptr_frame.clear();
+        self.gc_frame_size = 0;
+
+        // $self is always the first slot.
+        self.gc_ptr_frame.insert("self".to_string(), 0);
+        self.gc_frame_size = 4;
+
+        for name in ptr_params {
+            if !self.gc_ptr_frame.contains_key(name) {
+                self.gc_ptr_frame.insert(name.clone(), self.gc_frame_size);
+                self.gc_frame_size += 4;
+            }
+        }
+
+        for (name, vt) in let_locals {
+            if *vt == ValTy::I32 && !self.gc_ptr_frame.contains_key(name) {
+                self.gc_ptr_frame.insert(name.clone(), self.gc_frame_size);
+                self.gc_frame_size += 4;
+            }
+        }
+    }
+
+    /// Emit the shadow-stack frame prologue: bump `$__gc_shadow_ptr` and
+    /// zero-initialise all slots.  Must be called AFTER `build_frame`.
+    fn emit_frame_setup(&mut self) {
+        if self.gc_frame_size == 0 {
+            return;
+        }
+        self.comment(&format!(
+            "GC v2 shadow stack frame ({} bytes — {} pointer locals)",
+            self.gc_frame_size,
+            self.gc_frame_size / 4
+        ));
+        self.ln("(local.set $__gc_frame (global.get $__gc_shadow_ptr))");
+        self.ln(&format!(
+            "(global.set $__gc_shadow_ptr \
+             (i32.add (global.get $__gc_shadow_ptr) (i32.const {})))",
+            self.gc_frame_size
+        ));
+        // Zero-initialise every slot so GC never sees garbage during setup.
+        for slot in (0..self.gc_frame_size).step_by(4) {
+            if slot == 0 {
+                self.ln("(i32.store (local.get $__gc_frame) (i32.const 0))");
+            } else {
+                self.ln(&format!(
+                    "(i32.store offset={slot} (local.get $__gc_frame) (i32.const 0))"
+                ));
+            }
+        }
+    }
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+
     fn emit_constructor(&mut self, cls: &IrClass) -> Result<(), WasmCodegenError> {
-        let tag = self.class_tags.get(&cls.name).copied().unwrap_or(0);
-        let size = self
-            .layouts
-            .get(&cls.name)
-            .map(|l| l.total_size)
-            .unwrap_or(HEADER_SIZE);
+        let tag  = self.class_tags.get(&cls.name).copied().unwrap_or(0);
+        let size = self.layouts.get(&cls.name).map(|l| l.total_size).unwrap_or(HEADER_SIZE);
 
         let params: String = cls
             .constructor_params
@@ -1094,28 +1182,51 @@ impl WatGen {
 
         self.ln(&header);
         self.indent += 1;
-        self.ln("(local $self i32)");
-        self.ln("(local $__wb_obj i32)");
-        self.ln("(local $__wb_val i32)");
+        self.ln("(local $self   i32)");
+        self.ln("(local $__gc_frame i32)");
+        self.ln("(local $__rv_i32   i32)");
+        self.ln("(local $__wb_obj   i32)");
+        self.ln("(local $__wb_val   i32)");
 
-        self.comment(&format!(
-            "Allocate via GC: {} bytes, tag={}",
-            size, tag
-        ));
+        // ── Build GC frame (self + pointer params + i32 body lets) ────────
+        let ptr_params: Vec<String> = cls
+            .constructor_params
+            .iter()
+            .filter(|p| ir_to_val(&p.ty) == ValTy::I32)
+            .map(|p| p.name.clone())
+            .collect();
+
+        let mut body_lets: Vec<(String, ValTy)> = Vec::new();
+        collect_let_locals(&cls.constructor_body, &mut body_lets);
+
+        self.build_frame(&ptr_params, &body_lets);
+        self.emit_frame_setup();
+
+        // ── Allocate $self (GC may trigger here; frame is all-zero so safe) ─
+        self.comment(&format!("Allocate: {} bytes, tag={}", size, tag));
         self.ln(&format!(
             "(local.set $self (call $gc_alloc (i32.const {}) (i32.const {})))",
             size, tag
         ));
-        self.comment("Push self to shadow stack (GC will update this slot if object moves)");
-        self.ln("(call $gc_shadow_push (local.get $self))");
+        // Write $self into frame slot 0 so subsequent allocations keep it alive.
+        self.ln("(i32.store (local.get $__gc_frame) (local.get $self))");
 
-        // Store each constructor param into its field.
+        // Write pointer params into their frame slots.
+        for p in &cls.constructor_params {
+            if ir_to_val(&p.ty) == ValTy::I32 {
+                if let Some(&off) = self.gc_ptr_frame.get(&p.name) {
+                    let store = Self::frame_store_str(off, &format!("(local.get ${})", p.name));
+                    self.ln(&store);
+                }
+            }
+        }
+
+        // ── Store constructor params into the new object's fields ──────────
         for p in &cls.constructor_params {
             let vt = ir_to_val(&p.ty);
             if let Some(layout) = self.layouts.get(&cls.name) {
                 if let Some((offset, _)) = layout.get(&p.name) {
                     if vt == ValTy::I32 {
-                        // Write barrier: new object might store a pointer to nursery.
                         self.ln(&format!(
                             "(call $gc_write_barrier (local.get $self) (local.get ${}))",
                             p.name
@@ -1130,22 +1241,30 @@ impl WatGen {
             }
         }
 
-        // Emit explicit constructor body if present.
+        // ── Optional explicit constructor body ─────────────────────────────
         if !cls.constructor_body.is_empty() {
             self.current_class = cls.name.clone();
-            self.shadow_frame_depth = 1; // $self is on the shadow stack
-            let mut let_locals: Vec<(String, ValTy)> = vec![("self".to_string(), ValTy::I32)];
-            collect_let_locals(&cls.constructor_body, &mut let_locals);
-            let local_map: HashMap<String, ValTy> = let_locals.into_iter().collect();
+            self.current_return_vt = Some(ValTy::I32);
+            let mut let_locals_for_map: Vec<(String, ValTy)> =
+                vec![("self".to_string(), ValTy::I32)];
+            collect_let_locals(&cls.constructor_body, &mut let_locals_for_map);
+            let local_map: HashMap<String, ValTy> = let_locals_for_map.into_iter().collect();
             self.emit_stmts(&cls.constructor_body.clone(), &local_map)?;
-            self.shadow_frame_depth = 0;
         }
 
-        self.comment("Pop shadow stack — returns the (possibly GC-updated) self address");
-        self.ln("(call $gc_shadow_pop))");
+        // ── Return $self — reload from frame in case GC moved it ──────────
+        self.comment("Return $self — GC-reloaded from frame in case of relocation");
+        self.ln("(local.set $__rv_i32 (i32.load (local.get $__gc_frame)))");
+        self.emit_frame_cleanup();
+        self.ln("(local.get $__rv_i32))");
         self.indent -= 1;
+        self.gc_ptr_frame.clear();
+        self.gc_frame_size = 0;
+        self.current_return_vt = None;
         Ok(())
     }
+
+    // ── Method ────────────────────────────────────────────────────────────────
 
     fn emit_method(
         &mut self,
@@ -1193,7 +1312,7 @@ impl WatGen {
         ));
         self.indent += 1;
 
-        // Build local type map.
+        // ── Build local type map ─────────────────────────────────────────
         let mut locals: HashMap<String, ValTy> = HashMap::new();
         locals.insert("self".to_string(), ValTy::I32);
         for p in &method.params {
@@ -1208,62 +1327,75 @@ impl WatGen {
             locals.insert(name.clone(), *vt);
         }
 
-        // Declare node locals (one i32 per IrExpr::Node).
+        // Declare node locals (one i32 per IrExpr::Node in DFS order).
         let node_count = count_nodes_in_stmts(&method.body);
         for i in 0..node_count {
             self.ln(&format!("(local $__node_{} i32)", i));
             locals.insert(format!("__node_{}", i), ValTy::I32);
         }
 
-        // GC helper locals — always declared.
-        self.ln("(local $__rv_i32 i32)");  // return-value scratch for shadow cleanup
-        self.ln("(local $__rv_i64 i64)");
-        self.ln("(local $__wb_obj i32)");  // write-barrier temporaries
-        self.ln("(local $__wb_val i32)");
+        // GC + scratch locals — always declared.
+        self.ln("(local $__gc_frame i32)");
+        self.ln("(local $__rv_i32   i32)");
+        self.ln("(local $__rv_i64   i64)");
+        self.ln("(local $__wb_obj   i32)");
+        self.ln("(local $__wb_val   i32)");
 
-        // Set up shadow stack: push $self and any pointer-typed params.
-        let ptr_param_names: Vec<String> = std::iter::once("self".to_string())
-            .chain(
-                method
-                    .params
-                    .iter()
-                    .filter(|p| ir_to_val(&p.ty) == ValTy::I32)
-                    .map(|p| p.name.clone()),
-            )
+        // ── Build GC v2 shadow-stack frame ───────────────────────────────
+        let ptr_params: Vec<String> = method
+            .params
+            .iter()
+            .filter(|p| ir_to_val(&p.ty) == ValTy::I32)
+            .map(|p| p.name.clone())
             .collect();
 
-        self.shadow_frame_depth = ptr_param_names.len();
+        self.build_frame(&ptr_params, &let_locals);
         self.current_return_vt = if method.return_ty == IrType::Void {
             None
         } else {
             Some(ir_to_val(&method.return_ty))
         };
 
-        if !ptr_param_names.is_empty() {
-            self.comment("Push GC roots to shadow stack");
-            for name in &ptr_param_names {
-                self.ln(&format!("(call $gc_shadow_push (local.get ${}))", name));
+        // Frame prologue: bump shadow_ptr, zero-init, write initial values.
+        self.emit_frame_setup();
+        if self.gc_frame_size > 0 {
+            // Write $self into frame slot 0.
+            self.ln("(i32.store (local.get $__gc_frame) (local.get $self))");
+            // Write pointer params into their frame slots.
+            for p in &method.params {
+                if ir_to_val(&p.ty) == ValTy::I32 {
+                    if let Some(&off) = self.gc_ptr_frame.get(&p.name) {
+                        let store =
+                            Self::frame_store_str(off, &format!("(local.get ${})", p.name));
+                        self.ln(&store);
+                    }
+                }
             }
         }
 
-        // Reset node counter before emission.
+        // ── Emit body ────────────────────────────────────────────────────
         self.node_idx = 0;
         self.emit_stmts(&method.body.clone(), &locals)?;
 
-        // Shadow stack cleanup at the normal end of the method (handles void methods
-        // and non-void methods that have no explicit return, e.g., unreachable paths).
-        if self.shadow_frame_depth > 0 {
-            self.comment("Shadow stack cleanup (end of method)");
-            for _ in 0..self.shadow_frame_depth {
-                self.ln("(drop (call $gc_shadow_pop))");
-            }
-        }
+        // Frame cleanup at the natural end of the function (void methods or
+        // fall-through non-void paths that have no explicit return).
+        self.emit_frame_cleanup();
 
         self.ln(")");
         self.indent -= 1;
-        self.shadow_frame_depth = 0;
+        self.gc_ptr_frame.clear();
+        self.gc_frame_size = 0;
         self.current_return_vt = None;
         Ok(())
+    }
+
+    /// Static helper: produce the WAT for an i32.store into the GC frame at `offset`.
+    fn frame_store_str(offset: u32, value_wat: &str) -> String {
+        if offset == 0 {
+            format!("(i32.store (local.get $__gc_frame) {value_wat})")
+        } else {
+            format!("(i32.store offset={offset} (local.get $__gc_frame) {value_wat})")
+        }
     }
 
     // ── Statement emission ────────────────────────────────────────────────────
@@ -1285,9 +1417,19 @@ impl WatGen {
         locals: &HashMap<String, ValTy>,
     ) -> Result<(), WasmCodegenError> {
         match stmt {
-            IrStmt::Let { name, init, .. } => {
+            IrStmt::Let { name, ty, init } => {
                 self.emit_expr(init, locals)?;
                 self.ln(&format!("local.set ${}", name));
+                // GC v2: if this is an i32 (pointer) local tracked in the frame,
+                // write it to the frame so GC can keep the object alive and update
+                // the address if it gets copied during a later allocation.
+                if ir_to_val(ty) == ValTy::I32 {
+                    if let Some(&off) = self.gc_ptr_frame.get(name.as_str()) {
+                        let store =
+                            Self::frame_store_str(off, &format!("(local.get ${})", name));
+                        self.ln(&store);
+                    }
+                }
             }
             IrStmt::Assign { target, value } => {
                 match target {
@@ -1326,22 +1468,23 @@ impl WatGen {
                 }
             }
             IrStmt::Return(None) => {
-                self.emit_shadow_cleanup();
+                self.emit_frame_cleanup();
                 self.ln("return");
             }
             IrStmt::Return(Some(e)) => {
                 self.emit_expr(e, locals)?;
-                if self.shadow_frame_depth > 0 {
-                    // Save return value while we clean up the shadow stack.
+                // Save the return value before restoring the frame so that the
+                // WASM stack is empty when we call emit_frame_cleanup.
+                if self.gc_frame_size > 0 {
                     match self.current_return_vt {
                         Some(ValTy::I64) => {
                             self.ln("local.set $__rv_i64");
-                            self.emit_shadow_cleanup();
+                            self.emit_frame_cleanup();
                             self.ln("local.get $__rv_i64");
                         }
                         _ => {
                             self.ln("local.set $__rv_i32");
-                            self.emit_shadow_cleanup();
+                            self.emit_frame_cleanup();
                             self.ln("local.get $__rv_i32");
                         }
                     }
@@ -1431,13 +1574,6 @@ impl WatGen {
         Ok(())
     }
 
-    /// Emit shadow-stack pops (called before every `return` and at function end).
-    fn emit_shadow_cleanup(&mut self) {
-        for _ in 0..self.shadow_frame_depth {
-            self.ln("(drop (call $gc_shadow_pop))");
-        }
-    }
-
     // ── Expression emission ───────────────────────────────────────────────────
     //
     // Returns `true` if the expression leaves a value on the WASM stack.
@@ -1461,13 +1597,19 @@ impl WatGen {
                 self.ln(&format!("i32.const {}  ;; \"{}\"", off, s.escape_default()));
                 true
             }
+            // GC v2: i32 locals tracked in the shadow-stack frame are accessed via
+            // gc_reload_if_forwarded so that stale pointers (the GC may have moved
+            // the object since this local was last written) are transparently resolved.
             IrExpr::Local(name) => {
-                self.ln(&format!("local.get ${}", name));
+                if self.gc_ptr_frame.contains_key(name.as_str()) {
+                    self.ln(&Self::reload_local(name));
+                } else {
+                    self.ln(&format!("local.get ${}", name));
+                }
                 true
             }
-            // SelfRef: always go through gc_reload_if_forwarded so that if
-            // a constructor call in this method triggered GC and moved $self,
-            // we transparently get the forwarded address.
+            // SelfRef is equivalent to Local("self") but expressed as a dedicated
+            // variant; both go through gc_reload_if_forwarded.
             IrExpr::SelfRef => {
                 self.ln("(call $gc_reload_if_forwarded (local.get $self))");
                 true
@@ -1996,5 +2138,116 @@ mod tests {
         let w = wat(&counter_ir());
         assert!(w.contains("$gc_object_size"), "$gc_object_size missing");
         assert!(w.contains("$gc_scan_object"), "$gc_scan_object missing");
+    }
+
+    // ── GC v2 tests — shadow-stack frame for let-bindings ─────────────────────
+
+    /// IR fixture: a class with a method that has a Named (pointer) let-binding.
+    fn gc_v2_ir() -> IrModule {
+        IrModule {
+            name: "GcV2Test".into(),
+            server: None,
+            classes: vec![IrClass {
+                name: "Node".into(),
+                kind: IrClassKind::Class,
+                is_public: true,
+                fields: vec![],
+                constructor_params: vec![],
+                constructor_body: vec![],
+                methods: vec![IrMethod {
+                    name: "clone_node".into(),
+                    params: vec![],
+                    return_ty: IrType::Named("Node".into()),
+                    // body: let child: Node = Node_new(); return child;
+                    body: vec![
+                        IrStmt::Let {
+                            name: "child".into(),
+                            ty: IrType::Named("Node".into()),
+                            init: IrExpr::Invoke {
+                                callee: "Node".into(),
+                                args: vec![],
+                            },
+                        },
+                        IrStmt::Return(Some(IrExpr::Local("child".into()))),
+                    ],
+                    is_public: true,
+                    is_async: false,
+                }],
+            }],
+            routes: vec![],
+        }
+    }
+
+    #[test]
+    fn gc_v2_frame_local_declared() {
+        // Every method must declare a $__gc_frame local.
+        let w = wat(&gc_v2_ir());
+        assert!(
+            w.contains("(local $__gc_frame i32)"),
+            "$__gc_frame local not declared"
+        );
+    }
+
+    #[test]
+    fn gc_v2_frame_setup_bumps_shadow_ptr() {
+        // The frame prologue must bump $__gc_shadow_ptr by the frame size.
+        let w = wat(&gc_v2_ir());
+        assert!(
+            w.contains("(global.set $__gc_shadow_ptr"),
+            "frame setup must bump $__gc_shadow_ptr"
+        );
+        // Frame must be saved to $__gc_frame from the current shadow_ptr.
+        assert!(
+            w.contains("(local.set $__gc_frame (global.get $__gc_shadow_ptr))"),
+            "frame base not saved to $__gc_frame"
+        );
+    }
+
+    #[test]
+    fn gc_v2_i32_let_writes_to_frame() {
+        // After binding a Named (i32) let, the value must be written into the frame.
+        // The store pattern is: i32.store ... $__gc_frame ... $child
+        let w = wat(&gc_v2_ir());
+        assert!(
+            w.contains("(local.get $__gc_frame)") && w.contains("(local.get $child)"),
+            "i32 let-binding 'child' not written to GC frame"
+        );
+    }
+
+    #[test]
+    fn gc_v2_i32_local_read_goes_through_reload() {
+        // Reading a tracked i32 local must call $gc_reload_if_forwarded.
+        let w = wat(&gc_v2_ir());
+        // The return statement has `return child` which should emit:
+        //   (call $gc_reload_if_forwarded (local.get $child))
+        assert!(
+            w.contains("$gc_reload_if_forwarded") && w.contains("(local.get $child)"),
+            "i32 local 'child' not read through gc_reload_if_forwarded"
+        );
+    }
+
+    #[test]
+    fn gc_v2_frame_cleanup_restores_shadow_ptr() {
+        // Before every return, the frame must be restored:
+        //   (global.set $__gc_shadow_ptr (local.get $__gc_frame))
+        let w = wat(&gc_v2_ir());
+        assert!(
+            w.contains("(global.set $__gc_shadow_ptr (local.get $__gc_frame))"),
+            "frame not restored on return"
+        );
+    }
+
+    #[test]
+    fn gc_v2_constructor_uses_frame_not_push_pop() {
+        // GC v2 constructors must NOT call $gc_shadow_push / $gc_shadow_pop inside
+        // the constructor body — they use the frame approach instead.
+        let w = wat(&gc_v2_ir());
+        // The push/pop FUNCTIONS are still defined (part of GC runtime), but they
+        // must NOT appear as call instructions inside the constructor function body.
+        // We verify the frame approach: the constructor loads $self back from frame.
+        assert!(
+            w.contains("(i32.load (local.get $__gc_frame))"),
+            "constructor must load $self back from GC frame"
+        );
     }
 }

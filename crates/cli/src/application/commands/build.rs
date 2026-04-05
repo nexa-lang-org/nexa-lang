@@ -25,8 +25,26 @@ pub fn build(project_dir: Option<PathBuf>) {
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
+    // Incremental build: load existing lock once upfront so we can skip
+    // modules whose sources haven't changed and whose dist/ output still exists.
+    let existing_lock = load_build_lock(proj.root());
+
     let mut lock_entries: Vec<(String, Vec<BuildLockEntry>)> = Vec::new();
+    let mut compiled = 0usize;
+    let mut skipped = 0usize;
+
     for mod_name in &modules {
+        let current_sources =
+            fingerprint_module_sources(&proj.module_src_root(mod_name), proj.root());
+
+        if is_module_up_to_date(&existing_lock, mod_name, &current_sources, &proj.dist_dir(mod_name)) {
+            ui::info(format!("  {mod_name}  →  up to date"));
+            // Keep the existing lock entry so save_build_lock doesn't drop it.
+            lock_entries.push((mod_name.clone(), current_sources));
+            skipped += 1;
+            continue;
+        }
+
         let sp = ui::spinner(format!("Compiling module '{mod_name}'…"));
         match compile_project_file(
             &proj.module_entry(mod_name),
@@ -40,9 +58,8 @@ pub fn build(project_dir: Option<PathBuf>) {
                     &sp,
                     format!("  {mod_name}  →  {}", proj.dist_dir(mod_name).display()),
                 );
-                let sources =
-                    fingerprint_module_sources(&proj.module_src_root(mod_name), proj.root());
-                lock_entries.push((mod_name.clone(), sources));
+                lock_entries.push((mod_name.clone(), current_sources));
+                compiled += 1;
             }
             Err(e) => ui::fail(&sp, e.to_string()),
         }
@@ -51,7 +68,13 @@ pub fn build(project_dir: Option<PathBuf>) {
     let refs: Vec<(&str, Vec<BuildLockEntry>)> =
         lock_entries.iter().map(|(n, e)| (n.as_str(), e.clone())).collect();
     save_build_lock(proj.root(), &refs);
-    ui::info(format!("Build OK — {} module(s) compiled", modules.len()));
+
+    let summary = match (compiled, skipped) {
+        (c, 0) => format!("Build OK — {c} module(s) compiled"),
+        (0, s) => format!("Build OK — {s} module(s) up to date (nothing to compile)"),
+        (c, s) => format!("Build OK — {c} compiled, {s} up to date"),
+    };
+    ui::info(summary);
 }
 
 // ── Run / Dev server ──────────────────────────────────────────────────────────
@@ -336,9 +359,40 @@ pub(super) struct BuildLockEntry {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-struct BuildLockfile {
+pub(super) struct BuildLockfile {
     nexa_version: String,
     modules: std::collections::HashMap<String, Vec<BuildLockEntry>>,
+}
+
+/// Load the `nexa-build.lock` file from the project root.
+/// Returns a default (empty) lockfile if it does not exist or cannot be parsed.
+pub(super) fn load_build_lock(project_root: &Path) -> BuildLockfile {
+    fs::read_to_string(project_root.join("nexa-build.lock"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Return `true` if `mod_name` is up to date and does not need to be recompiled.
+///
+/// A module is considered up to date when ALL of the following hold:
+///   1. The lock contains an entry for this module.
+///   2. The current source fingerprints are identical to the locked fingerprints.
+///   3. The compiled output (`app.js`) exists in `dist_dir` — prevents skipping
+///      when someone manually deletes the dist output.
+pub(super) fn is_module_up_to_date(
+    lock: &BuildLockfile,
+    mod_name: &str,
+    current: &[BuildLockEntry],
+    dist_dir: &Path,
+) -> bool {
+    if !dist_dir.join("app.js").exists() {
+        return false;
+    }
+    match lock.modules.get(mod_name) {
+        None => false,
+        Some(prev) => prev == current,
+    }
 }
 
 pub(super) fn fingerprint_module_sources(
@@ -522,6 +576,70 @@ mod tests {
         let core_entries = lock.modules.get("core").unwrap();
         assert_eq!(core_entries.len(), 1);
         assert_eq!(core_entries[0], entry);
+    }
+
+    // ── load_build_lock ───────────────────────────────────────────────────────
+
+    #[test]
+    fn load_build_lock_returns_default_when_missing() {
+        let tmp = TempDir::new().unwrap();
+        let lock = load_build_lock(tmp.path());
+        assert!(lock.modules.is_empty());
+        assert!(lock.nexa_version.is_empty());
+    }
+
+    #[test]
+    fn load_build_lock_reads_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let entry = BuildLockEntry { path: "core/app.nx".into(), sha256: "abc".into() };
+        save_build_lock(tmp.path(), &[("core", vec![entry.clone()])]);
+
+        let lock = load_build_lock(tmp.path());
+        assert!(lock.modules.contains_key("core"));
+        assert_eq!(lock.modules["core"][0], entry);
+    }
+
+    // ── is_module_up_to_date ──────────────────────────────────────────────────
+
+    #[test]
+    fn up_to_date_false_when_no_lock_entry() {
+        let tmp = TempDir::new().unwrap();
+        // Create a fake app.js so the dist check passes.
+        fs::write(tmp.path().join("app.js"), "").unwrap();
+        let lock = BuildLockfile::default();
+        assert!(!is_module_up_to_date(&lock, "core", &[], tmp.path()));
+    }
+
+    #[test]
+    fn up_to_date_false_when_dist_missing() {
+        let tmp = TempDir::new().unwrap();
+        // Lock has an entry but dist/app.js does not exist.
+        let entry = BuildLockEntry { path: "app.nx".into(), sha256: "xyz".into() };
+        let mut lock = BuildLockfile::default();
+        lock.modules.insert("core".into(), vec![entry.clone()]);
+        // dist_dir = tmp.path() which has no app.js
+        assert!(!is_module_up_to_date(&lock, "core", &[entry], tmp.path()));
+    }
+
+    #[test]
+    fn up_to_date_false_when_fingerprint_changed() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("app.js"), "").unwrap();
+        let old = BuildLockEntry { path: "app.nx".into(), sha256: "old_hash".into() };
+        let new = BuildLockEntry { path: "app.nx".into(), sha256: "new_hash".into() };
+        let mut lock = BuildLockfile::default();
+        lock.modules.insert("core".into(), vec![old]);
+        assert!(!is_module_up_to_date(&lock, "core", &[new], tmp.path()));
+    }
+
+    #[test]
+    fn up_to_date_true_when_fingerprint_matches_and_dist_exists() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("app.js"), "").unwrap();
+        let entry = BuildLockEntry { path: "app.nx".into(), sha256: "hash123".into() };
+        let mut lock = BuildLockfile::default();
+        lock.modules.insert("core".into(), vec![entry.clone()]);
+        assert!(is_module_up_to_date(&lock, "core", &[entry], tmp.path()));
     }
 
     #[test]
