@@ -1,8 +1,48 @@
 use super::{init::to_pascal_case, init::write_file, load_project};
+use crate::application::project::{AppType, Platform};
 use crate::infrastructure::ui;
 use std::{fs, path::PathBuf};
 
-pub fn module_add(name: String, project_dir: Option<PathBuf>) {
+// ── Parsing helpers ───────────────────────────────────────────────────────────
+
+/// Parse a kebab-case string into an [`AppType`].
+/// Unknown strings fall back to [`AppType::Web`].
+pub fn parse_app_type(s: &str) -> AppType {
+    match s {
+        "backend" => AppType::Backend,
+        "cli" => AppType::Cli,
+        "desktop" => AppType::Desktop,
+        "package" => AppType::Package,
+        _ => AppType::Web,
+    }
+}
+
+/// Parse a single kebab-case platform string into a [`Platform`].
+/// Returns `None` for unrecognised values.
+pub fn parse_platform(s: &str) -> Option<Platform> {
+    match s {
+        "browser" => Some(Platform::Browser),
+        "native" => Some(Platform::Native),
+        "native-linux" => Some(Platform::NativeLinux),
+        "native-macos" => Some(Platform::NativeMacos),
+        "native-windows" => Some(Platform::NativeWindows),
+        "macos" => Some(Platform::Macos),
+        "windows" => Some(Platform::Windows),
+        "linux" => Some(Platform::Linux),
+        "ios" => Some(Platform::Ios),
+        "android" => Some(Platform::Android),
+        _ => None,
+    }
+}
+
+// ── Command ───────────────────────────────────────────────────────────────────
+
+pub fn module_add(
+    name: String,
+    project_dir: Option<PathBuf>,
+    module_type: String,
+    platforms_raw: Option<String>,
+) {
     if !name
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
@@ -12,6 +52,20 @@ pub fn module_add(name: String, project_dir: Option<PathBuf>) {
             name
         ));
     }
+
+    let app_type = parse_app_type(&module_type);
+
+    // Parse comma-separated platforms, silently ignoring unknown values.
+    let platforms: Vec<Platform> = platforms_raw
+        .as_deref()
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .filter_map(parse_platform)
+                .collect()
+        })
+        .unwrap_or_default();
 
     let proj = load_project(project_dir);
 
@@ -28,14 +82,8 @@ pub fn module_add(name: String, project_dir: Option<PathBuf>) {
     fs::create_dir_all(&src_test)
         .unwrap_or_else(|e| ui::die(format!("cannot create directory: {e}")));
 
-    let module_json = format!(
-        r#"{{
-  "name": "{name}",
-  "main": "app.nx",
-  "dependencies": {{}}
-}}
-"#
-    );
+    // Build module.json — only include optional fields when non-default.
+    let module_json = build_module_json(&name, &app_type, &platforms);
     write_file(
         &root.join("modules").join(&name).join("module.json"),
         &module_json,
@@ -90,6 +138,35 @@ app {app} {{
     ui::blank();
 }
 
+/// Construct the `module.json` content.
+///
+/// The `"type"` field is omitted when the type is `Web` (the default) and
+/// `"platforms"` is omitted when the list is empty — both for backward
+/// compatibility with projects that do not use multi-target features.
+fn build_module_json(name: &str, app_type: &AppType, platforms: &[Platform]) -> String {
+    let type_field = match app_type {
+        AppType::Web => String::new(),
+        AppType::Backend => "  \"type\": \"backend\",\n".to_string(),
+        AppType::Cli => "  \"type\": \"cli\",\n".to_string(),
+        AppType::Desktop => "  \"type\": \"desktop\",\n".to_string(),
+        AppType::Package => "  \"type\": \"package\",\n".to_string(),
+    };
+
+    let platforms_field = if platforms.is_empty() {
+        String::new()
+    } else {
+        let items: Vec<String> = platforms
+            .iter()
+            .map(|p| format!("\"{}\"", p.as_str()))
+            .collect();
+        format!("  \"platforms\": [{}],\n", items.join(", "))
+    };
+
+    format!(
+        "{{\n  \"name\": \"{name}\",\n  \"main\": \"app.nx\",\n{type_field}{platforms_field}  \"dependencies\": {{}}\n}}\n"
+    )
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -120,12 +197,95 @@ mod tests {
         fs::write(src.join("app.nx"), "").unwrap();
     }
 
+    // ── parse_app_type ────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_app_type_known_variants() {
+        assert_eq!(parse_app_type("backend"), AppType::Backend);
+        assert_eq!(parse_app_type("cli"), AppType::Cli);
+        assert_eq!(parse_app_type("desktop"), AppType::Desktop);
+        assert_eq!(parse_app_type("package"), AppType::Package);
+        assert_eq!(parse_app_type("web"), AppType::Web);
+    }
+
+    #[test]
+    fn parse_app_type_unknown_falls_back_to_web() {
+        assert_eq!(parse_app_type("unknown"), AppType::Web);
+        assert_eq!(parse_app_type(""), AppType::Web);
+    }
+
+    // ── parse_platform ────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_platform_all_variants() {
+        assert_eq!(parse_platform("browser"), Some(Platform::Browser));
+        assert_eq!(parse_platform("native"), Some(Platform::Native));
+        assert_eq!(parse_platform("native-linux"), Some(Platform::NativeLinux));
+        assert_eq!(parse_platform("native-macos"), Some(Platform::NativeMacos));
+        assert_eq!(parse_platform("native-windows"), Some(Platform::NativeWindows));
+        assert_eq!(parse_platform("macos"), Some(Platform::Macos));
+        assert_eq!(parse_platform("windows"), Some(Platform::Windows));
+        assert_eq!(parse_platform("linux"), Some(Platform::Linux));
+        assert_eq!(parse_platform("ios"), Some(Platform::Ios));
+        assert_eq!(parse_platform("android"), Some(Platform::Android));
+    }
+
+    #[test]
+    fn parse_platform_unknown_returns_none() {
+        assert_eq!(parse_platform("unknown"), None);
+        assert_eq!(parse_platform(""), None);
+    }
+
+    // ── build_module_json ─────────────────────────────────────────────────────
+
+    #[test]
+    fn build_module_json_web_omits_type_and_platforms() {
+        let json = build_module_json("my-web", &AppType::Web, &[]);
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["name"].as_str(), Some("my-web"));
+        assert!(val.get("type").is_none(), "type should be absent for web");
+        assert!(
+            val.get("platforms").is_none(),
+            "platforms should be absent when empty"
+        );
+    }
+
+    #[test]
+    fn build_module_json_backend_includes_type() {
+        let json = build_module_json("my-api", &AppType::Backend, &[]);
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["type"].as_str(), Some("backend"));
+        assert!(val.get("platforms").is_none());
+    }
+
+    #[test]
+    fn build_module_json_cli_with_platforms() {
+        let json =
+            build_module_json("my-cli", &AppType::Cli, &[Platform::Native]);
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["type"].as_str(), Some("cli"));
+        let plats: Vec<&str> = val["platforms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(plats, vec!["native"]);
+    }
+
+    // ── module_add (integration) ──────────────────────────────────────────────
+
     #[test]
     fn module_add_creates_module_directory_structure() {
         let tmp = TempDir::new().unwrap();
         make_project(tmp.path());
 
-        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+        module_add(
+            "api".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(),
+            None,
+        );
 
         assert!(tmp.path().join("modules").join("api").join("module.json").exists());
         assert!(tmp
@@ -150,12 +310,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_project(tmp.path());
 
-        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+        module_add(
+            "api".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(),
+            None,
+        );
 
-        let raw = fs::read_to_string(
-            tmp.path().join("modules").join("api").join("module.json"),
-        )
-        .unwrap();
+        let raw =
+            fs::read_to_string(tmp.path().join("modules").join("api").join("module.json"))
+                .unwrap();
         let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(val["name"].as_str(), Some("api"));
         assert_eq!(val["main"].as_str(), Some("app.nx"));
@@ -167,7 +331,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_project(tmp.path());
 
-        module_add("my-service".to_string(), Some(tmp.path().to_path_buf()));
+        module_add(
+            "my-service".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(),
+            None,
+        );
 
         let raw = fs::read_to_string(
             tmp.path()
@@ -179,7 +348,10 @@ mod tests {
         )
         .unwrap();
         assert!(raw.contains("app MyService"), "expected 'app MyService' in:\n{raw}");
-        assert!(raw.contains("package my_service"), "expected 'package my_service' in:\n{raw}");
+        assert!(
+            raw.contains("package my_service"),
+            "expected 'package my_service' in:\n{raw}"
+        );
     }
 
     #[test]
@@ -187,7 +359,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_project(tmp.path());
 
-        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
+        module_add(
+            "api".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(),
+            None,
+        );
 
         let raw = fs::read_to_string(tmp.path().join("project.json")).unwrap();
         let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -206,8 +383,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_project(tmp.path());
 
-        module_add("api".to_string(), Some(tmp.path().to_path_buf()));
-        module_add("worker".to_string(), Some(tmp.path().to_path_buf()));
+        module_add(
+            "api".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(),
+            None,
+        );
+        module_add(
+            "worker".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(),
+            None,
+        );
 
         let raw = fs::read_to_string(tmp.path().join("project.json")).unwrap();
         let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -219,5 +406,190 @@ mod tests {
             .collect();
         assert_eq!(modules.len(), 3); // core + api + worker
         assert!(modules.contains(&"worker"));
+    }
+
+    // ── Task 6 new tests ──────────────────────────────────────────────────────
+
+    /// `nexa module add my-api --type backend` → module.json contains "type": "backend"
+    #[test]
+    fn module_add_type_backend_writes_type_field() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "my-api".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "backend".to_string(),
+            None,
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("my-api").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            val["type"].as_str(),
+            Some("backend"),
+            "module.json should contain \"type\": \"backend\""
+        );
+        assert!(
+            val.get("platforms").is_none(),
+            "platforms should be absent when not specified"
+        );
+    }
+
+    /// `nexa module add my-web` (no --type) → module.json has no "type" field (backward compat)
+    #[test]
+    fn module_add_default_web_omits_type_field() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "my-web".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "web".to_string(), // default supplied by clap
+            None,
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("my-web").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(
+            val.get("type").is_none(),
+            "type field must be absent for web modules (backward compat)"
+        );
+        assert!(
+            val.get("platforms").is_none(),
+            "platforms field must be absent when not specified"
+        );
+    }
+
+    /// `nexa module add my-cli --type cli --platforms native` →
+    /// module.json has both "type": "cli" and "platforms": ["native"]
+    #[test]
+    fn module_add_cli_with_platforms_writes_both_fields() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "my-cli".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "cli".to_string(),
+            Some("native".to_string()),
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("my-cli").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(val["type"].as_str(), Some("cli"));
+        let plats: Vec<&str> = val["platforms"]
+            .as_array()
+            .expect("platforms should be an array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(plats, vec!["native"]);
+    }
+
+    /// Multiple platforms separated by commas.
+    #[test]
+    fn module_add_multiple_platforms_parsed_correctly() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "cross".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "backend".to_string(),
+            Some("native-linux,native-macos".to_string()),
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("cross").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let plats: Vec<&str> = val["platforms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(plats, vec!["native-linux", "native-macos"]);
+    }
+
+    /// Unknown platforms are silently dropped.
+    #[test]
+    fn module_add_unknown_platform_is_ignored() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "srv".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "backend".to_string(),
+            Some("native,bogus-platform".to_string()),
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("srv").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let plats: Vec<&str> = val["platforms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        // Only "native" survives; "bogus-platform" is silently dropped.
+        assert_eq!(plats, vec!["native"]);
+    }
+
+    /// Desktop module type.
+    #[test]
+    fn module_add_desktop_type() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "gui".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "desktop".to_string(),
+            None,
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("gui").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(val["type"].as_str(), Some("desktop"));
+    }
+
+    /// Package module type.
+    #[test]
+    fn module_add_package_type() {
+        let tmp = TempDir::new().unwrap();
+        make_project(tmp.path());
+
+        module_add(
+            "my-lib".to_string(),
+            Some(tmp.path().to_path_buf()),
+            "package".to_string(),
+            None,
+        );
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("my-lib").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(val["type"].as_str(), Some("package"));
     }
 }

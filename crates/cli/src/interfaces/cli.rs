@@ -196,6 +196,12 @@ enum ModuleAction {
         /// Project root directory (default: current directory)
         #[arg(short, long, value_name = "DIR")]
         project: Option<PathBuf>,
+        /// Module type: web | backend | cli | desktop | package (default: web)
+        #[arg(long = "type", value_name = "TYPE", default_value = "web")]
+        module_type: String,
+        /// Target platforms, comma-separated (e.g. browser,native)
+        #[arg(long, value_name = "PLATFORMS")]
+        platforms: Option<String>,
     },
 }
 
@@ -325,7 +331,12 @@ pub async fn run() {
         } => commands::install(package, project, module),
 
         Commands::Module { action } => match action {
-            ModuleAction::Add { name, project } => commands::module_add(name, project),
+            ModuleAction::Add {
+                name,
+                project,
+                module_type,
+                platforms,
+            } => commands::module_add(name, project, module_type, platforms),
         },
 
         Commands::Search {
