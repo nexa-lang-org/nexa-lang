@@ -25,6 +25,7 @@ rand          = "0.8"
 hex           = "0.4"
 zip           = "2.1"
 reqwest       = { version = "0.12", default-features = false, features = ["blocking", "multipart", "json", "rustls-tls"] }
+rayon              = "1"
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 console            = "0.15"
