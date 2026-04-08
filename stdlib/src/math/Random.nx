@@ -1,0 +1,46 @@
+package std.math;
+
+// Random — Pseudo-random number generation.
+// Delegates to JavaScript's Math.random() via the _mathRandom runtime helper.
+//
+// Usage:
+//   import std.math.Random;
+//   let rng = Random();
+//   let n = rng.nextInt(100);       // 0..99
+//   let b = rng.nextBool();
+//   let r = rng.nextInRange(10, 20); // 10..19
+
+public class Random {
+    private Int _lastValue;
+
+    constructor() {
+        this._lastValue = 0;
+    }
+
+    // Random integer in [0, max).
+    nextInt(max: Int) => Int {
+        let v: Int = _mathRandom(max);
+        this._lastValue = v;
+        return v;
+    }
+
+    // Random boolean.
+    nextBool() => Bool {
+        return _mathRandom(2) == 0;
+    }
+
+    // Random integer in [min, max).
+    nextInRange(min: Int, max: Int) => Int {
+        return min + _mathRandom(max - min);
+    }
+
+    // Random integer in [1, max] (inclusive).
+    nextIntInclusive(max: Int) => Int {
+        return 1 + _mathRandom(max);
+    }
+
+    // The value returned by the last nextInt / nextInRange call.
+    lastValue() => Int {
+        return this._lastValue;
+    }
+}

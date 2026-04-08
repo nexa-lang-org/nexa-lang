@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::application::ports::storage::{TokenStore, UserStore};
+use crate::application::ports::storage::{RefreshTokenStore, TokenStore, UserStore};
 use crate::domain::token::ApiToken;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -16,9 +16,19 @@ struct Claims {
     exp: i64,    // unix timestamp
 }
 
+/// Returned by `login` and `register`.
+/// `access_token` is a short-lived JWT; `refresh_token` is an opaque `nxr_`
+/// token valid for 30 days that can be used with `POST /v1/auth/refresh`.
+#[derive(Debug)]
+pub struct LoginResult {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
 pub struct AuthService {
     user_store: Arc<dyn UserStore>,
     token_store: Arc<dyn TokenStore>,
+    refresh_token_store: Arc<dyn RefreshTokenStore>,
     jwt_secret: String,
 }
 
@@ -26,16 +36,18 @@ impl AuthService {
     pub fn new(
         user_store: Arc<dyn UserStore>,
         token_store: Arc<dyn TokenStore>,
+        refresh_token_store: Arc<dyn RefreshTokenStore>,
         jwt_secret: String,
     ) -> Self {
         Self {
             user_store,
             token_store,
+            refresh_token_store,
             jwt_secret,
         }
     }
 
-    pub async fn register(&self, email: &str, password: &str) -> Result<String> {
+    pub async fn register(&self, email: &str, password: &str) -> Result<LoginResult> {
         // Normalize to lowercase so Alice@example.com and alice@example.com
         // are treated as the same account (prevents squatting attacks).
         let email = email.to_lowercase();
@@ -51,10 +63,12 @@ impl AuthService {
             anyhow!("registration failed")
         })?;
         let user = self.user_store.create(email, &hash).await?;
-        self.make_jwt(user.id)
+        let access_token = self.make_jwt(user.id)?;
+        let refresh_token = self.issue_refresh_token(user.id).await?;
+        Ok(LoginResult { access_token, refresh_token })
     }
 
-    pub async fn login(&self, email: &str, password: &str) -> Result<String> {
+    pub async fn login(&self, email: &str, password: &str) -> Result<LoginResult> {
         let email = email.to_lowercase();
         let email = email.as_str();
         let user = self
@@ -70,7 +84,33 @@ impl AuthService {
         if !valid {
             return Err(anyhow!("invalid email or password"));
         }
-        self.make_jwt(user.id)
+        let access_token = self.make_jwt(user.id)?;
+        let refresh_token = self.issue_refresh_token(user.id).await?;
+        Ok(LoginResult { access_token, refresh_token })
+    }
+
+    /// Issue a new access token using a valid refresh token.
+    /// The refresh token must not be expired; it is NOT rotated (re-use allowed
+    /// until expiry or explicit logout).
+    pub async fn refresh_access(&self, raw_refresh: &str) -> Result<String> {
+        let hash = hash_token(raw_refresh);
+        let rt = self
+            .refresh_token_store
+            .find_by_hash(&hash)
+            .await?
+            .ok_or_else(|| anyhow!("invalid or expired refresh token"))?;
+        if rt.expires_at < Utc::now() {
+            let _ = self.refresh_token_store.delete_by_hash(&hash).await;
+            return Err(anyhow!("refresh token expired"));
+        }
+        self.make_jwt(rt.user_id)
+    }
+
+    /// Revoke a refresh token (logout).
+    pub async fn logout(&self, raw_refresh: &str) -> Result<()> {
+        let hash = hash_token(raw_refresh);
+        self.refresh_token_store.delete_by_hash(&hash).await?;
+        Ok(())
     }
 
     /// Verify either a JWT session token or a permanent API token (`nxt_…`).
@@ -136,6 +176,15 @@ impl AuthService {
         )
         .map_err(|e| anyhow!("encode error: {e}"))
     }
+
+    /// Generate and persist a 30-day refresh token for `user_id`.
+    async fn issue_refresh_token(&self, user_id: Uuid) -> Result<String> {
+        let raw = generate_refresh_token();
+        let hash = hash_token(&raw);
+        let expires_at = Utc::now() + Duration::days(30);
+        self.refresh_token_store.create(user_id, &hash, expires_at).await?;
+        Ok(raw)
+    }
 }
 
 // ── Email validation ──────────────────────────────────────────────────────────
@@ -157,11 +206,18 @@ fn valid_email(email: &str) -> bool {
 
 // ── Token generation / hashing ────────────────────────────────────────────────
 
-/// Generate a random `nxt_<64 hex chars>` token (32 random bytes).
+/// Generate a random `nxt_<64 hex chars>` API token (32 random bytes).
 fn generate_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     format!("nxt_{}", hex::encode(bytes))
+}
+
+/// Generate a random `nxr_<64 hex chars>` refresh token (32 random bytes).
+fn generate_refresh_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!("nxr_{}", hex::encode(bytes))
 }
 
 /// SHA-256 hash of the raw token, hex-encoded.
@@ -176,9 +232,10 @@ fn hash_token(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{token::ApiToken, user::User};
+    use crate::domain::{refresh_token::RefreshToken, token::ApiToken, user::User};
     use anyhow::Result;
     use async_trait::async_trait;
+    use chrono::DateTime;
     use std::sync::Mutex;
 
     // ── In-memory UserStore ──────────────────────────────────────────────────
@@ -285,12 +342,65 @@ mod tests {
         }
     }
 
+    // ── In-memory RefreshTokenStore ──────────────────────────────────────────
+
+    #[derive(Default)]
+    struct MemRefreshTokenStore {
+        tokens: Mutex<Vec<RefreshToken>>,
+    }
+
+    #[async_trait]
+    impl RefreshTokenStore for MemRefreshTokenStore {
+        async fn create(
+            &self,
+            user_id: Uuid,
+            token_hash: &str,
+            expires_at: DateTime<Utc>,
+        ) -> Result<RefreshToken> {
+            let t = RefreshToken {
+                id: Uuid::new_v4(),
+                user_id,
+                token_hash: token_hash.to_string(),
+                created_at: Utc::now(),
+                expires_at,
+            };
+            self.tokens.lock().unwrap().push(t.clone());
+            Ok(t)
+        }
+
+        async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>> {
+            Ok(self
+                .tokens
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|t| t.token_hash == token_hash)
+                .cloned())
+        }
+
+        async fn delete_by_hash(&self, token_hash: &str) -> Result<bool> {
+            let mut tokens = self.tokens.lock().unwrap();
+            let before = tokens.len();
+            tokens.retain(|t| t.token_hash != token_hash);
+            Ok(tokens.len() < before)
+        }
+
+        async fn delete_expired(&self) -> Result<u64> {
+            let now = Utc::now();
+            let mut tokens = self.tokens.lock().unwrap();
+            let before = tokens.len();
+            tokens.retain(|t| t.expires_at > now);
+            Ok((before - tokens.len()) as u64)
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     fn make_service() -> AuthService {
         AuthService::new(
             Arc::new(MemUserStore::default()),
             Arc::new(MemTokenStore::default()),
+            Arc::new(MemRefreshTokenStore::default()),
             "test-secret-32-chars-long-enough!".to_string(),
         )
     }
@@ -298,18 +408,15 @@ mod tests {
     // ── AuthService tests ────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn register_returns_jwt() {
+    async fn register_returns_jwt_and_refresh_token() {
         let svc = make_service();
-        let token = svc
+        let result = svc
             .register("alice@example.com", "password123")
             .await
             .unwrap();
-        assert!(token.len() > 20, "token should be non-trivially long");
-        // JWT starts with 'e' (base64url of {"alg":"HS256",...})
-        assert!(
-            !token.starts_with("nxt_"),
-            "register should return a JWT, not an API token"
-        );
+        assert!(result.access_token.len() > 20, "access token should be non-trivially long");
+        assert!(!result.access_token.starts_with("nxt_"), "should return a JWT, not an API token");
+        assert!(result.refresh_token.starts_with("nxr_"), "refresh token should have nxr_ prefix");
     }
 
     #[tokio::test]
@@ -324,16 +431,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_valid_credentials_returns_jwt() {
+    async fn login_returns_jwt_and_refresh_token() {
         let svc = make_service();
         svc.register("bob@example.com", "correcthorsebattery")
             .await
             .unwrap();
-        let token = svc
+        let result = svc
             .login("bob@example.com", "correcthorsebattery")
             .await
             .unwrap();
-        assert!(!token.is_empty());
+        assert!(!result.access_token.is_empty());
+        assert!(result.refresh_token.starts_with("nxr_"));
     }
 
     #[tokio::test]
@@ -354,9 +462,8 @@ mod tests {
     #[tokio::test]
     async fn verify_jwt_round_trip() {
         let svc = make_service();
-        let token = svc.register("dave@example.com", "pass").await.unwrap();
-        let user_id = svc.verify_token(&token).await.unwrap();
-        // Registered user exists and JWT decodes to a valid UUID
+        let result = svc.register("dave@example.com", "pass").await.unwrap();
+        let user_id = svc.verify_token(&result.access_token).await.unwrap();
         assert!(!user_id.is_nil());
     }
 
@@ -367,38 +474,64 @@ mod tests {
         assert!(err.to_string().contains("invalid token"));
     }
 
+    // ── S01: Refresh token tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn refresh_access_issues_new_jwt() {
+        let svc = make_service();
+        let result = svc.register("refresh@example.com", "pass").await.unwrap();
+        let new_jwt = svc.refresh_access(&result.refresh_token).await.unwrap();
+        // New JWT must be decodable and refer to the same user
+        let uid_original = svc.verify_token(&result.access_token).await.unwrap();
+        let uid_refreshed = svc.verify_token(&new_jwt).await.unwrap();
+        assert_eq!(uid_original, uid_refreshed);
+    }
+
+    #[tokio::test]
+    async fn refresh_with_invalid_token_fails() {
+        let svc = make_service();
+        let err = svc.refresh_access("nxr_not_a_real_token").await.unwrap_err();
+        assert!(err.to_string().contains("invalid or expired"));
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_refresh_token() {
+        let svc = make_service();
+        let result = svc.register("logout@example.com", "pass").await.unwrap();
+        svc.logout(&result.refresh_token).await.unwrap();
+        let err = svc.refresh_access(&result.refresh_token).await.unwrap_err();
+        assert!(err.to_string().contains("invalid or expired"));
+    }
+
+    // ── API token tests ──────────────────────────────────────────────────────
+
     #[tokio::test]
     async fn api_token_create_list_revoke() {
         let svc = make_service();
-        let jwt = svc.register("eve@example.com", "pass").await.unwrap();
-        let user_id = svc.verify_token(&jwt).await.unwrap();
+        let result = svc.register("eve@example.com", "pass").await.unwrap();
+        let user_id = svc.verify_token(&result.access_token).await.unwrap();
 
-        // Create
         let (raw, record) = svc.create_api_token(user_id, "ci-token").await.unwrap();
         assert!(raw.starts_with("nxt_"));
         assert_eq!(record.name, "ci-token");
         assert_eq!(record.user_id, user_id);
 
-        // Verify via API token
         let verified = svc.verify_token(&raw).await.unwrap();
         assert_eq!(verified, user_id);
 
-        // List
         let tokens = svc.list_api_tokens(user_id).await.unwrap();
         assert_eq!(tokens.len(), 1);
 
-        // Revoke
         let deleted = svc.revoke_api_token(record.id, user_id).await.unwrap();
         assert!(deleted);
         let err = svc.verify_token(&raw).await.unwrap_err();
         assert!(err.to_string().contains("invalid token"));
 
-        // List after revoke
         let tokens = svc.list_api_tokens(user_id).await.unwrap();
         assert!(tokens.is_empty());
     }
 
-    // ── S6: Email validation ─────────────────────────────────────────────────
+    // ── Email validation ─────────────────────────────────────────────────────
 
     #[test]
     fn valid_email_accepts_normal_addresses() {
@@ -414,7 +547,6 @@ mod tests {
         assert!(!valid_email("noatsign"));
         assert!(!valid_email("missing@dot"));
         assert!(!valid_email(""));
-        // 255 chars — over RFC limit
         assert!(!valid_email(&format!("{}@b.c", "a".repeat(252))));
     }
 
@@ -425,44 +557,34 @@ mod tests {
         assert!(err.to_string().contains("invalid email"));
     }
 
-    // ── S8: JWT duration 7 days ──────────────────────────────────────────────
+    // ── JWT duration ─────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn jwt_expiry_is_approximately_7_days() {
         let svc = make_service();
-        let token = svc.register("exp@example.com", "pass").await.unwrap();
+        let result = svc.register("exp@example.com", "pass").await.unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret(b"test-secret-32-chars-long-enough!");
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
-        validation.validate_exp = false; // read exp without enforcing
-        let data = jsonwebtoken::decode::<super::Claims>(&token, &key, &validation).unwrap();
+        validation.validate_exp = false;
+        let data =
+            jsonwebtoken::decode::<super::Claims>(&result.access_token, &key, &validation).unwrap();
         let exp = data.claims.exp;
         let now = chrono::Utc::now().timestamp();
         let diff_secs = exp - now;
-        // Should be between 6d 23h and 7d 1h
-        assert!(
-            diff_secs > 6 * 24 * 3600 - 60,
-            "expiry should be ~7 days, got {diff_secs}s"
-        );
-        assert!(
-            diff_secs < 8 * 24 * 3600,
-            "expiry should be ~7 days, got {diff_secs}s"
-        );
+        assert!(diff_secs > 6 * 24 * 3600 - 60, "expiry should be ~7 days, got {diff_secs}s");
+        assert!(diff_secs < 8 * 24 * 3600, "expiry should be ~7 days, got {diff_secs}s");
     }
 
     #[tokio::test]
     async fn revoke_other_users_token_fails() {
         let svc = make_service();
-        let jwt1 = svc.register("frank@example.com", "pass").await.unwrap();
-        let jwt2 = svc.register("grace@example.com", "pass").await.unwrap();
-        let uid1 = svc.verify_token(&jwt1).await.unwrap();
-        let uid2 = svc.verify_token(&jwt2).await.unwrap();
+        let r1 = svc.register("frank@example.com", "pass").await.unwrap();
+        let r2 = svc.register("grace@example.com", "pass").await.unwrap();
+        let uid1 = svc.verify_token(&r1.access_token).await.unwrap();
+        let uid2 = svc.verify_token(&r2.access_token).await.unwrap();
 
         let (_, record) = svc.create_api_token(uid1, "my-token").await.unwrap();
-        // uid2 tries to revoke uid1's token
         let deleted = svc.revoke_api_token(record.id, uid2).await.unwrap();
-        assert!(
-            !deleted,
-            "should not be able to revoke another user's token"
-        );
+        assert!(!deleted, "should not be able to revoke another user's token");
     }
 }

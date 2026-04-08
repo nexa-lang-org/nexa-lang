@@ -21,6 +21,43 @@ pub fn is_interactive() -> bool {
     !is_ci() && std::io::stdout().is_terminal()
 }
 
+// ── Progress bar ──────────────────────────────────────────────────────────────
+
+/// Create a block-fill progress bar:  →  Label  ████████████  100%
+/// In CI / non-TTY mode, prints the label as plain text and returns a hidden bar.
+pub fn progress_bar(label: impl Into<String>, total: u64) -> ProgressBar {
+    let label = label.into();
+    if !is_interactive() {
+        println!("{label}");
+        return ProgressBar::hidden();
+    }
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::with_template("  {prefix:.bold}  {bar:12.cyan/blue.dim}  {percent:>3}%")
+            .unwrap()
+            .progress_chars("█░"),
+    );
+    pb.set_prefix(format!("→ {label}"));
+    pb
+}
+
+/// Finish a progress bar at 100% and print a green ✓ success line below it.
+pub fn bar_done(pb: &ProgressBar, msg: impl AsRef<str>) {
+    pb.finish();
+    println!("  {}  {}", style("✓").green().bold(), msg.as_ref());
+}
+
+/// Abandon a progress bar (partial) and exit 1 with a red ✗ error line.
+pub fn bar_fail(pb: &ProgressBar, msg: impl AsRef<str>) -> ! {
+    pb.abandon();
+    eprintln!(
+        "  {}  {}",
+        style("✗").red().bold(),
+        style(msg.as_ref()).red()
+    );
+    std::process::exit(1);
+}
+
 // ── Spinner ───────────────────────────────────────────────────────────────────
 
 /// Create an animated spinner for a long-running operation.

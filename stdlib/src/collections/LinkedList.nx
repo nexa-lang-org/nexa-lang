@@ -1,0 +1,69 @@
+package std.collections;
+
+// LinkedList<T> — Doubly-ended list with O(1) add at both ends.
+// Implemented as a dynamic array; prepend uses _NexaList.prepend().
+//
+// Usage:
+//   import std.collections.LinkedList;
+//   let ll = LinkedList();
+//   ll.addLast(1);
+//   ll.addFirst(0);
+//   let first = ll.removeFirst();  // => 0
+
+public class LinkedList<T> {
+    private List<T> _data;
+    private Int _size;
+
+    constructor() {
+        this._data = [];
+        this._size = 0;
+    }
+
+    // Add item to the end. O(1).
+    addLast(item: T) => Void {
+        this._data.push(item);
+        this._size = this._size + 1;
+        return;
+    }
+
+    // Add item to the front. O(n) shift.
+    addFirst(item: T) => Void {
+        this._data.prepend(item);
+        this._size = this._size + 1;
+        return;
+    }
+
+    // Remove and return the last item. O(1).
+    removeLast() => T {
+        this._size = this._size - 1;
+        return this._data.pop();
+    }
+
+    // Remove and return the first item. O(n) shift.
+    removeFirst() => T {
+        let item: T = this._data.get(0);
+        this._data.removeAt(0);
+        this._size = this._size - 1;
+        return item;
+    }
+
+    // Return the first item without removing it.
+    peekFirst() => T {
+        return this._data.get(0);
+    }
+
+    // Return the last item without removing it.
+    peekLast() => T {
+        return this._data.get(this._size - 1);
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

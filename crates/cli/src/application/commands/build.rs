@@ -33,19 +33,19 @@ pub fn build(project_dir: Option<PathBuf>) {
     let mut compiled = 0usize;
     let mut skipped = 0usize;
 
+    let pb = ui::progress_bar("Compiling…", modules.len() as u64);
+
     for mod_name in &modules {
         let current_sources =
             fingerprint_module_sources(&proj.module_src_root(mod_name), proj.root());
 
         if is_module_up_to_date(&existing_lock, mod_name, &current_sources, &proj.dist_dir(mod_name)) {
-            ui::info(format!("  {mod_name}  →  up to date"));
-            // Keep the existing lock entry so save_build_lock doesn't drop it.
             lock_entries.push((mod_name.clone(), current_sources));
             skipped += 1;
+            pb.inc(1);
             continue;
         }
 
-        let sp = ui::spinner(format!("Compiling module '{mod_name}'…"));
         match compile_project_file(
             &proj.module_entry(mod_name),
             &proj.module_src_root(mod_name),
@@ -54,14 +54,11 @@ pub fn build(project_dir: Option<PathBuf>) {
         ) {
             Ok(result) => {
                 write_dist_inner(&proj.dist_dir(mod_name), result, mod_name);
-                ui::done(
-                    &sp,
-                    format!("  {mod_name}  →  {}", proj.dist_dir(mod_name).display()),
-                );
                 lock_entries.push((mod_name.clone(), current_sources));
                 compiled += 1;
+                pb.inc(1);
             }
-            Err(e) => ui::fail(&sp, e.to_string()),
+            Err(e) => ui::bar_fail(&pb, e.to_string()),
         }
     }
 
@@ -74,7 +71,7 @@ pub fn build(project_dir: Option<PathBuf>) {
         (0, s) => format!("Build OK — {s} module(s) up to date (nothing to compile)"),
         (c, s) => format!("Build OK — {c} compiled, {s} up to date"),
     };
-    ui::info(summary);
+    ui::bar_done(&pb, summary);
 }
 
 // ── Run / Dev server ──────────────────────────────────────────────────────────
@@ -103,7 +100,7 @@ pub async fn run(
 
     let proj = load_project(project_dir);
     let mod_name = proj.main_module_name().to_string();
-    let sp = ui::spinner(format!("Compiling module '{mod_name}'…"));
+    let pb = ui::progress_bar("Compiling…", 2);
     let result = match compile_project_file(
         &proj.main_entry(),
         &proj.main_src_root(),
@@ -111,14 +108,16 @@ pub async fn run(
         &mod_name,
     ) {
         Ok(r) => r,
-        Err(e) => ui::fail(&sp, e.to_string()),
+        Err(e) => ui::bar_fail(&pb, e.to_string()),
     };
-    ui::done(&sp, "Compiled");
+    pb.inc(1);
 
     let dist = proj.dist_dir(&mod_name);
     let _ = fs::create_dir_all(&dist);
     let _ = fs::write(dist.join("index.html"), &result.html);
     let _ = fs::write(dist.join("app.js"), &result.js);
+    pb.inc(1);
+    ui::bar_done(&pb, "Compiled");
 
     let port = port_override.unwrap_or(3000);
     let state = Arc::new(AppState::new(result.html, result.js, port));
@@ -165,7 +164,7 @@ pub fn package(
     let app_version = proj.project.version.clone();
     let bundle_name = format!("{app_name}-{mod_name}");
 
-    let sp = ui::spinner(format!("Packaging {bundle_name} v{app_version}…"));
+    let pb = ui::progress_bar("Packaging…", 2);
 
     let bundle = match compile_to_bundle(
         &proj.module_entry(&mod_name),
@@ -176,38 +175,40 @@ pub fn package(
         &app_version,
     ) {
         Ok(b) => b,
-        Err(e) => ui::fail(&sp, e.to_string()),
+        Err(e) => ui::bar_fail(&pb, e.to_string()),
     };
+    pb.inc(1);
 
     let out_path = output.unwrap_or_else(|| PathBuf::from(format!("{bundle_name}.nexa")));
     let file = fs::File::create(&out_path)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("cannot create {}: {e}", out_path.display())));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("cannot create {}: {e}", out_path.display())));
 
     let mut zip = zip::ZipWriter::new(file);
     let opts: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     zip.start_file("app.nxb", opts)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP start app.nxb: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP start app.nxb: {e}")));
     zip.write_all(&bundle.nxb)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP write nxb: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP write nxb: {e}")));
     zip.start_file("manifest.json", opts)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP start manifest.json: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP start manifest.json: {e}")));
     zip.write_all(bundle.manifest.as_bytes())
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP write manifest: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP write manifest: {e}")));
     zip.start_file("signature.sig", opts)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP start signature.sig: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP start signature.sig: {e}")));
     zip.write_all(bundle.signature.as_bytes())
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP write signature: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP write signature: {e}")));
     let src_entry = format!("src/{}", bundle.source_filename);
     zip.start_file(&src_entry, opts)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP start src entry: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP start src entry: {e}")));
     zip.write_all(bundle.source.as_bytes())
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP write source: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP write source: {e}")));
     zip.finish()
-        .unwrap_or_else(|e| ui::fail(&sp, format!("ZIP finalize: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("ZIP finalize: {e}")));
+    pb.inc(1);
 
-    ui::done(&sp, format!("Package OK  →  {}", out_path.display()));
+    ui::bar_done(&pb, format!("Package OK  →  {}", out_path.display()));
 }
 
 // ── write_dist (Q2 fixed: no panicking .expect) ───────────────────────────────
@@ -227,16 +228,17 @@ fn write_dist_inner(dist_dir: &Path, result: nexa_compiler::CompileResult, label
 // ── Bundle runner ─────────────────────────────────────────────────────────────
 
 async fn run_from_bundle(bundle_path: PathBuf, port_override: Option<u16>) {
-    let sp = ui::spinner(format!("Loading bundle {}…", bundle_path.display()));
+    let pb = ui::progress_bar("Loading bundle…", 4);
 
     let file = fs::File::open(&bundle_path)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("cannot open {}: {e}", bundle_path.display())));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("cannot open {}: {e}", bundle_path.display())));
     let mut archive = zip::ZipArchive::new(file)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("invalid .nexa file: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("invalid .nexa file: {e}")));
 
-    let nxb_bytes = read_zip_entry(&mut archive, "app.nxb", &sp);
-    let manifest_bytes = read_zip_entry(&mut archive, "manifest.json", &sp);
-    let sig_bytes = read_zip_entry(&mut archive, "signature.sig", &sp);
+    let nxb_bytes = read_zip_entry(&mut archive, "app.nxb", &pb);
+    let manifest_bytes = read_zip_entry(&mut archive, "manifest.json", &pb);
+    let sig_bytes = read_zip_entry(&mut archive, "signature.sig", &pb);
+    pb.inc(1); // step 1: unpacked
 
     let expected_sig = String::from_utf8_lossy(&sig_bytes).trim().to_string();
     let mut hasher = Sha256::new();
@@ -245,20 +247,23 @@ async fn run_from_bundle(bundle_path: PathBuf, port_override: Option<u16>) {
     let actual_sig = format!("{:x}", hasher.finalize());
 
     if actual_sig != expected_sig {
-        ui::fail(
-            &sp,
+        ui::bar_fail(
+            &pb,
             "bundle signature validation failed — file may be corrupted or tampered",
         );
     }
+    pb.inc(1); // step 2: signature OK
 
     let program = decode_nxb(&nxb_bytes)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("failed to decode bundle: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("failed to decode bundle: {e}")));
+    pb.inc(1); // step 3: decoded
 
     let result = CodeGenerator::new()
         .generate(&program)
-        .unwrap_or_else(|e| ui::fail(&sp, format!("codegen failed: {e}")));
+        .unwrap_or_else(|e| ui::bar_fail(&pb, format!("codegen failed: {e}")));
+    pb.inc(1); // step 4: codegen
 
-    ui::done(&sp, "Bundle loaded  ✓  signature OK");
+    ui::bar_done(&pb, "Bundle loaded  ✓  signature OK");
 
     let port = port_override
         .or_else(|| program.server.as_ref().map(|s| s.port))
@@ -288,14 +293,14 @@ async fn run_from_bundle(bundle_path: PathBuf, port_override: Option<u16>) {
 fn read_zip_entry(
     archive: &mut zip::ZipArchive<fs::File>,
     name: &str,
-    sp: &indicatif::ProgressBar,
+    pb: &indicatif::ProgressBar,
 ) -> Vec<u8> {
     let mut entry = archive.by_name(name).unwrap_or_else(|_| {
-        ui::fail(sp, format!(".nexa bundle is missing '{name}'"));
+        ui::bar_fail(pb, format!(".nexa bundle is missing '{name}'"));
     });
     let mut buf = Vec::new();
     entry.read_to_end(&mut buf).unwrap_or_else(|e| {
-        ui::fail(sp, format!("failed to read '{name}' from bundle: {e}"));
+        ui::bar_fail(pb, format!("failed to read '{name}' from bundle: {e}"));
     });
     buf
 }
@@ -459,6 +464,220 @@ mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
+
+    // ── watch_task E2E helpers ────────────────────────────────────────────────
+
+    /// Minimal project that compiles successfully.
+    fn make_watch_project(dir: &std::path::Path) {
+        fs::write(
+            dir.join("project.json"),
+            r#"{"name":"watch-test","version":"0.1.0","author":"Test","modules":["core"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("nexa-compiler.yaml"),
+            "version: \"0.1\"\nmain_module: \"core\"\n",
+        )
+        .unwrap();
+        let src_main = dir
+            .join("modules")
+            .join("core")
+            .join("src")
+            .join("main");
+        fs::create_dir_all(&src_main).unwrap();
+        fs::write(
+            dir.join("modules").join("core").join("module.json"),
+            r#"{"name":"core","main":"app.nx"}"#,
+        )
+        .unwrap();
+        fs::write(
+            src_main.join("app.nx"),
+            "app App {\n  server { port: 3000; }\n  public window HomePage {\n    public render() => Component {\n      return Page { Text(\"Hi\") };\n    }\n  }\n  route \"/\" => HomePage;\n}\n",
+        )
+        .unwrap();
+    }
+
+    fn app_nx_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("modules")
+            .join("core")
+            .join("src")
+            .join("main")
+            .join("app.nx")
+    }
+
+    // ── watch_task: .nx change triggers recompile and reload signal ───────────
+
+    /// Spawn watch_task, modify a .nx file, and wait for the "reload" broadcast.
+    /// Covers the happy path of `nexa run --watch`.
+    #[tokio::test]
+    async fn watch_task_recompiles_on_nx_file_change() {
+        use tokio::time::{sleep, timeout, Duration};
+
+        let tmp = TempDir::new().unwrap();
+        make_watch_project(tmp.path());
+
+        let proj = crate::application::project::NexaProject::load(tmp.path()).unwrap();
+        let state = Arc::new(nexa_server::AppState::new(
+            String::new(),
+            String::new(),
+            0,
+        ));
+        let mut rx = state.tx.subscribe();
+
+        let s = state.clone();
+        let p = proj.clone();
+        tokio::spawn(async move { watch_task(s, p).await });
+
+        // Give the file-system watcher time to arm itself.
+        sleep(Duration::from_millis(300)).await;
+
+        // Touch the source file — watcher should pick this up.
+        fs::write(
+            app_nx_path(tmp.path()),
+            "app App {\n  server { port: 3000; }\n  public window HomePage {\n    public render() => Component {\n      return Page { Text(\"Updated\") };\n    }\n  }\n  route \"/\" => HomePage;\n}\n",
+        )
+        .unwrap();
+
+        // Expect a "reload" broadcast within 4 seconds.
+        let msg = timeout(Duration::from_secs(4), rx.recv())
+            .await
+            .expect("expected a reload signal within 4 s after .nx file change")
+            .expect("broadcast channel closed unexpectedly");
+        assert_eq!(msg, "reload");
+    }
+
+    // ── watch_task: non-.nx changes are silently ignored ─────────────────────
+
+    /// Writing a Markdown file must NOT trigger a recompile.
+    #[tokio::test]
+    async fn watch_task_ignores_non_nx_file_changes() {
+        use tokio::time::{sleep, timeout, Duration};
+
+        let tmp = TempDir::new().unwrap();
+        make_watch_project(tmp.path());
+
+        let proj = crate::application::project::NexaProject::load(tmp.path()).unwrap();
+        let state = Arc::new(nexa_server::AppState::new(
+            String::new(),
+            String::new(),
+            0,
+        ));
+        let mut rx = state.tx.subscribe();
+
+        let s = state.clone();
+        let p = proj.clone();
+        tokio::spawn(async move { watch_task(s, p).await });
+
+        sleep(Duration::from_millis(300)).await;
+
+        // Write a non-.nx file inside the watched directory.
+        fs::write(
+            tmp.path()
+                .join("modules")
+                .join("core")
+                .join("src")
+                .join("main")
+                .join("notes.md"),
+            "should be ignored",
+        )
+        .unwrap();
+
+        // No reload signal should arrive within 600 ms.
+        let result = timeout(Duration::from_millis(600), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "watch_task must not send a reload signal for non-.nx file changes"
+        );
+    }
+
+    // ── watch_task: compile error does not crash the task ────────────────────
+
+    /// When a .nx file contains invalid syntax the task must:
+    /// - NOT crash (the background task stays alive)
+    /// - NOT update AppState (state remains as initially set)
+    /// - NOT send a reload signal
+    #[tokio::test]
+    async fn watch_task_handles_compile_error_without_crashing() {
+        use tokio::time::{sleep, timeout, Duration};
+
+        let tmp = TempDir::new().unwrap();
+        make_watch_project(tmp.path());
+
+        let proj = crate::application::project::NexaProject::load(tmp.path()).unwrap();
+        let sentinel_html = "sentinel-html".to_string();
+        let state = Arc::new(nexa_server::AppState::new(
+            sentinel_html.clone(),
+            String::new(),
+            0,
+        ));
+        let mut rx = state.tx.subscribe();
+
+        let s = state.clone();
+        let p = proj.clone();
+        tokio::spawn(async move { watch_task(s, p).await });
+
+        sleep(Duration::from_millis(300)).await;
+
+        // Overwrite with syntactically invalid Nexa.
+        fs::write(app_nx_path(tmp.path()), "THIS IS NOT VALID NEXA !!!").unwrap();
+
+        // No reload signal should arrive within 800 ms.
+        let result = timeout(Duration::from_millis(800), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "watch_task must not send a reload signal when compilation fails"
+        );
+
+        // AppState HTML must not have changed.
+        let shared = state.shared.read().await;
+        assert_eq!(
+            shared.html, sentinel_html,
+            "AppState HTML must not change when compilation fails"
+        );
+    }
+
+    // ── watch_task: subsequent change after error recovers ───────────────────
+
+    /// After a compile error, fixing the source must still trigger a reload.
+    /// Verifies the watch loop continues running after an error.
+    #[tokio::test]
+    async fn watch_task_recovers_after_compile_error() {
+        use tokio::time::{sleep, timeout, Duration};
+
+        let tmp = TempDir::new().unwrap();
+        make_watch_project(tmp.path());
+
+        let proj = crate::application::project::NexaProject::load(tmp.path()).unwrap();
+        let state = Arc::new(nexa_server::AppState::new(
+            String::new(),
+            String::new(),
+            0,
+        ));
+        let mut rx = state.tx.subscribe();
+
+        let s = state.clone();
+        let p = proj.clone();
+        tokio::spawn(async move { watch_task(s, p).await });
+
+        sleep(Duration::from_millis(300)).await;
+
+        // 1. Introduce a compile error.
+        fs::write(app_nx_path(tmp.path()), "INVALID").unwrap();
+        sleep(Duration::from_millis(500)).await;
+
+        // 2. Fix the file — the loop must still be running and detect the fix.
+        fs::write(
+            app_nx_path(tmp.path()),
+            "app App {\n  server { port: 3000; }\n  public window HomePage {\n    public render() => Component {\n      return Page { Text(\"Fixed\") };\n    }\n  }\n  route \"/\" => HomePage;\n}\n",
+        )
+        .unwrap();
+
+        let msg = timeout(Duration::from_secs(4), rx.recv())
+            .await
+            .expect("expected a reload signal after fixing compile error")
+            .expect("broadcast channel closed unexpectedly");
+        assert_eq!(msg, "reload");
+    }
 
     fn sha256_hex(content: &[u8]) -> String {
         let mut h = Sha256::new();

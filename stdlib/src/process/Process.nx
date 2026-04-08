@@ -1,0 +1,68 @@
+package std.process;
+
+// Process — Program lifecycle management (Node.js).
+// Provides access to process information and lifecycle hooks.
+// In a browser context most methods return safe fallback values.
+//
+// Usage:
+//   import std.process.Process;
+//   let p = Process();
+//   p.onExit((code) => console.log("exiting with " + code));
+//   p.exit(0);
+
+public class Process {
+    private Bool _exitHandlerSet;
+    private Bool _uncaughtHandlerSet;
+
+    constructor() {
+        this._exitHandlerSet = false;
+        this._uncaughtHandlerSet = false;
+    }
+
+    // ── Information ───────────────────────────────────────────────────────────
+
+    // Process ID. Returns -1 in the browser.
+    pid() => Int { return _processPid(); }
+
+    // Platform identifier: "linux", "darwin", "win32", or "browser".
+    platform() => String { return _processPlatform(); }
+
+    // Current working directory. Returns "/" in the browser.
+    cwd() => String { return _processCwd(); }
+
+    // Command-line arguments (argv[2..]).
+    args() => List<String> { return _processArgs(); }
+
+    // Seconds since the process started. Returns 0 in the browser.
+    uptime() => Int { return _processUptime(); }
+
+    // Heap memory currently used (bytes). Returns 0 in the browser.
+    memoryUsed() => Int { return _processMemoryUsed(); }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    // Terminate the process with the given exit code.
+    exit(code: Int) => Void { _processExit(code); return; }
+
+    // Register a callback invoked just before the process exits.
+    // fn receives the exit code as an Int.
+    onExit(fn: (Int) => Void) => Void {
+        _processOnExit(fn);
+        this._exitHandlerSet = true;
+        return;
+    }
+
+    // Register a callback for uncaught exceptions.
+    // fn receives the error message as a String.
+    onUncaughtException(fn: (String) => Void) => Void {
+        _processOnUncaught(fn);
+        this._uncaughtHandlerSet = true;
+        return;
+    }
+
+    // True when an exit handler has been registered.
+    hasExitHandler() => Bool { return this._exitHandlerSet; }
+
+    // True when an uncaught-exception handler has been registered.
+    hasUncaughtHandler() => Bool { return this._uncaughtHandlerSet; }
+}

@@ -1,0 +1,72 @@
+package std.io;
+
+// Console — Full-featured logging and console control.
+// Bridges to the browser/Node.js global `console` object.
+//
+// Usage:
+//   import std.io.Console;
+//   let c = Console();
+//   c.log("hello");
+//   c.error("something failed");
+//   c.group("section").log("inside").groupEnd();
+
+public class Console {
+    constructor() {}
+
+    // Standard output levels
+    log(message: String) => Void { console.log(message); return; }
+    info(message: String) => Void { console.info(message); return; }
+    warn(message: String) => Void { console.warn(message); return; }
+    error(message: String) => Void { console.error(message); return; }
+    debug(message: String) => Void { console.debug(message); return; }
+
+    // Log an integer value.
+    logInt(value: Int) => Void { console.log(value); return; }
+
+    // Log a boolean value.
+    logBool(value: Bool) => Void { console.log(value); return; }
+
+    // Print tabular data (object or array as string).
+    table(data: String) => Void { console.table(data); return; }
+
+    // Open a collapsible group with a label.
+    group(label: String) => Console { console.group(label); return this; }
+
+    // Open a collapsed group (collapsed by default in DevTools).
+    groupCollapsed(label: String) => Console { console.groupCollapsed(label); return this; }
+
+    // Close the most recent group.
+    groupEnd() => Void { console.groupEnd(); return; }
+
+    // Start a named timer.
+    time(label: String) => Void { console.time(label); return; }
+
+    // Stop and print a named timer.
+    timeEnd(label: String) => Void { console.timeEnd(label); return; }
+
+    // Log a time-stamped message without stopping the timer.
+    timeLog(label: String) => Void { console.timeLog(label); return; }
+
+    // Increment a named counter and print its value.
+    count(label: String) => Void { console.count(label); return; }
+
+    // Reset a named counter.
+    countReset(label: String) => Void { console.countReset(label); return; }
+
+    // Clear the console.
+    clear() => Void { console.clear(); return; }
+
+    // Print a stack trace.
+    trace(message: String) => Void { console.trace(message); return; }
+
+    // Print message if cond is false.
+    assert(cond: Bool, message: String) => Void {
+        if (cond == false) {
+            console.error(message);
+        }
+        return;
+    }
+
+    // Print a horizontal separator line.
+    separator() => Void { console.log("─────────────────────────────────"); return; }
+}

@@ -1,0 +1,49 @@
+package std.collections;
+
+// Stack<T> — LIFO stack backed by _NexaList.
+//
+// Usage:
+//   import std.collections.Stack;
+//   let s = Stack();
+//   s.push(1); s.push(2);
+//   let top = s.pop();    // => 2
+
+public class Stack<T> {
+    private List<T> data;
+    private Int _len;
+
+    constructor() {
+        this.data = [];
+        this._len = 0;
+    }
+
+    // Push item onto the top of the stack.
+    push(item: T) => Void {
+        this.data.push(item);
+        this._len = this._len + 1;
+        return;
+    }
+
+    // Remove and return the top item.
+    // Only call when isEmpty() is false.
+    pop() => T {
+        this._len = this._len - 1;
+        return this.data.pop();
+    }
+
+    // Return the top item without removing it.
+    // Only call when isEmpty() is false.
+    peek() => T {
+        return this.data.get(this._len - 1);
+    }
+
+    // True when the stack contains no items.
+    isEmpty() => Bool {
+        return this._len == 0;
+    }
+
+    // Number of items currently in the stack.
+    size() => Int {
+        return this._len;
+    }
+}

@@ -1,0 +1,90 @@
+package std.collections;
+
+// HashMap<K, V> — Key-value map using parallel arrays. O(n) lookup.
+// Callers should check containsKey before calling get.
+//
+// Usage:
+//   import std.collections.HashMap;
+//   let m = HashMap();
+//   m.put("name", "Alice");
+//   let v = m.get("name");  // => "Alice"
+
+public class HashMap<K, V> {
+    private List<K> _keys;
+    private List<V> _values;
+    private Int _size;
+
+    constructor() {
+        this._keys = [];
+        this._values = [];
+        this._size = 0;
+    }
+
+    // Insert or update a key-value pair. O(n).
+    put(key: K, value: V) => Void {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                this._values.set(i, value);
+                break;
+            }
+            i = i + 1;
+        }
+        if (i == this._size) {
+            this._keys.push(key);
+            this._values.push(value);
+            this._size = this._size + 1;
+        }
+        return;
+    }
+
+    // Return the value associated with key.
+    // Caller must ensure containsKey is true; otherwise behaviour is undefined.
+    get(key: K) => V {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                return this._values.get(i);
+            }
+            i = i + 1;
+        }
+        return this._values.get(0);
+    }
+
+    // True if key exists in the map.
+    containsKey(key: K) => Bool {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // Remove the entry with the given key if present. O(n).
+    remove(key: K) => Void {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                this._keys.removeAt(i);
+                this._values.removeAt(i);
+                this._size = this._size - 1;
+                return;
+            }
+            i = i + 1;
+        }
+        return;
+    }
+
+    // Number of entries.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

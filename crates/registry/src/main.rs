@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use nexa_registry::{
     application::services::{auth::AuthService, packages::PackagesService},
-    infrastructure::postgres::{PgPackageStore, PgTokenStore, PgUserStore},
+    infrastructure::postgres::{PgPackageStore, PgRefreshTokenStore, PgTokenStore, PgUserStore},
     interfaces::http::{build_router, AppState},
 };
 use sqlx::postgres::PgPoolOptions;
@@ -49,20 +50,47 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Running database migrations…");
     sqlx::migrate!("./migrations").run(&pool).await?;
 
+    // S02: read allowed CORS origins from environment.
+    // CORS_ORIGINS=https://app.nexa-lang.org,https://staging.nexa-lang.org
+    // If unset, any origin is allowed (suitable for dev / open registries).
+    let allowed_origins: Option<Vec<HeaderValue>> =
+        std::env::var("CORS_ORIGINS").ok().map(|raw| {
+            raw.split(',')
+                .filter_map(|s| {
+                    let s = s.trim();
+                    match HeaderValue::from_str(s) {
+                        Ok(v) => Some(v),
+                        Err(_) => {
+                            tracing::warn!(origin = s, "CORS_ORIGINS: skipping invalid origin");
+                            None
+                        }
+                    }
+                })
+                .collect()
+        });
+
+    if let Some(ref origins) = allowed_origins {
+        tracing::info!(count = origins.len(), "CORS restricted to configured origins");
+    } else {
+        tracing::warn!("CORS_ORIGINS not set — allowing any origin (dev/open mode)");
+    }
+
     let user_store = Arc::new(PgUserStore::new(pool.clone()));
     let token_store = Arc::new(PgTokenStore::new(pool.clone()));
+    let refresh_token_store = Arc::new(PgRefreshTokenStore::new(pool.clone()));
     let package_store = Arc::new(PgPackageStore::new(pool));
 
     let state = AppState {
         auth: Arc::new(AuthService::new(
             user_store.clone(),
             token_store,
+            refresh_token_store,
             jwt_secret,
         )),
         packages: Arc::new(PackagesService::new(package_store, user_store)),
     };
 
-    let router = build_router(state);
+    let router = build_router(state, allowed_origins);
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 

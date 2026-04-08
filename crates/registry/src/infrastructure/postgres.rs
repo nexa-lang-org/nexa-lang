@@ -4,9 +4,10 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::application::ports::storage::{PackageStore, TokenStore, UserStore};
+use crate::application::ports::storage::{PackageStore, RefreshTokenStore, TokenStore, UserStore};
 use crate::domain::{
     package::{Package, PackageVersion},
+    refresh_token::RefreshToken,
     token::ApiToken,
     user::User,
 };
@@ -362,5 +363,91 @@ impl TokenStore for PgTokenStore {
             .await
             .map_err(|e| anyhow!("delete token: {e}"))?;
         Ok(result.rows_affected() > 0)
+    }
+}
+
+// ── RefreshTokenStore ─────────────────────────────────────────────────────────
+
+#[derive(FromRow)]
+struct RefreshTokenRow {
+    id: Uuid,
+    user_id: Uuid,
+    token_hash: String,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+}
+
+impl From<RefreshTokenRow> for RefreshToken {
+    fn from(r: RefreshTokenRow) -> Self {
+        RefreshToken {
+            id: r.id,
+            user_id: r.user_id,
+            token_hash: r.token_hash,
+            created_at: r.created_at,
+            expires_at: r.expires_at,
+        }
+    }
+}
+
+pub struct PgRefreshTokenStore {
+    pool: PgPool,
+}
+
+impl PgRefreshTokenStore {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl RefreshTokenStore for PgRefreshTokenStore {
+    async fn create(
+        &self,
+        user_id: Uuid,
+        token_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<RefreshToken> {
+        let row = sqlx::query_as::<_, RefreshTokenRow>(
+            "INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+             VALUES ($1, $2, $3)
+             RETURNING id, user_id, token_hash, created_at, expires_at",
+        )
+        .bind(user_id)
+        .bind(token_hash)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow!("create refresh token: {e}"))?;
+        Ok(row.into())
+    }
+
+    async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>> {
+        let row = sqlx::query_as::<_, RefreshTokenRow>(
+            "SELECT id, user_id, token_hash, created_at, expires_at
+             FROM refresh_tokens
+             WHERE token_hash = $1",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| anyhow!("find refresh token: {e}"))?;
+        Ok(row.map(Into::into))
+    }
+
+    async fn delete_by_hash(&self, token_hash: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM refresh_tokens WHERE token_hash = $1")
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| anyhow!("delete refresh token: {e}"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_expired(&self) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM refresh_tokens WHERE expires_at < NOW()")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| anyhow!("delete expired refresh tokens: {e}"))?;
+        Ok(result.rows_affected())
     }
 }

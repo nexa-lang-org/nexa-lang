@@ -6,6 +6,7 @@ mod doctor;
 mod init;
 mod module;
 mod registry;
+mod test;
 mod token;
 
 pub use build::{build, package, run};
@@ -14,6 +15,7 @@ pub use doctor::{doctor, update};
 pub use init::init;
 pub use module::module_add;
 pub use registry::{info, install, login, publish, register, search};
+pub use test::test;
 pub use token::{token_create, token_list, token_revoke};
 
 use crate::application::project::NexaProject;

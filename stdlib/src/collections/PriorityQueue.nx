@@ -1,0 +1,63 @@
+package std.collections;
+
+// PriorityQueue<T> — Min-priority queue (sorted insertion).
+// Smallest element is always at the front.
+// NOTE: comparison uses the JS `>` operator — works correctly for Int values.
+//
+// Usage:
+//   import std.collections.PriorityQueue;
+//   let pq = PriorityQueue();
+//   pq.enqueue(3); pq.enqueue(1); pq.enqueue(2);
+//   pq.dequeue();  // => 1
+
+public class PriorityQueue<T> {
+    private List<T> _heap;
+    private Int _size;
+
+    constructor() {
+        this._heap = [];
+        this._size = 0;
+    }
+
+    // Insert item, maintaining min-order. O(n).
+    enqueue(item: T) => Void {
+        this._heap.push(item);
+        this._size = this._size + 1;
+        let i: Int = this._size - 1;
+        while (i > 0) {
+            let prev: Int = i - 1;
+            if (this._heap.get(prev) > this._heap.get(i)) {
+                let tmp: T = this._heap.get(prev);
+                this._heap.set(prev, this._heap.get(i));
+                this._heap.set(i, tmp);
+                i = prev;
+            } else {
+                i = 0;
+            }
+        }
+        return;
+    }
+
+    // Remove and return the smallest item. O(n) shift.
+    dequeue() => T {
+        let item: T = this._heap.get(0);
+        this._heap.removeAt(0);
+        this._size = this._size - 1;
+        return item;
+    }
+
+    // Return the smallest item without removing it.
+    peek() => T {
+        return this._heap.get(0);
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

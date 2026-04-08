@@ -2,7 +2,7 @@ use axum::{
     async_trait,
     body::Bytes,
     extract::{FromRequestParts, Multipart, Path, Query, State},
-    http::{header, request::Parts, HeaderMap, Method, StatusCode},
+    http::{header, request::Parts, HeaderValue, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -54,7 +54,13 @@ pub struct AppState {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-pub fn build_router(state: AppState) -> Router {
+/// Build the main Axum router.
+///
+/// `allowed_origins` — if provided, only those exact `Origin` header values are
+/// accepted for CORS pre-flight requests. Pass `None` to allow any origin (dev
+/// / public registry mode). In production set `CORS_ORIGINS` in the environment
+/// (comma-separated list of allowed origins).
+pub fn build_router(state: AppState, allowed_origins: Option<Vec<HeaderValue>>) -> Router {
     // Rate-limit register + login: 1 token replenished every 6 s (≈ 10 req/min),
     // initial burst of 3. Keyed per IP to block brute-force / enumeration.
     let auth_limiter = Arc::new(
@@ -71,15 +77,25 @@ pub fn build_router(state: AppState) -> Router {
             config: auth_limiter,
         });
 
-    // CORS: public registry — allow any origin, restrict methods and headers.
-    let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+    // S02 fix: restrict CORS to configured origins in production; fall back to
+    // Any only when no origins are explicitly configured (local dev / CI).
+    let cors = match allowed_origins {
+        Some(origins) => CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::POST, Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+        None => CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([Method::GET, Method::POST, Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+    };
 
     let v1 = Router::new()
         .route("/v1/auth/tokens", post(create_token).get(list_tokens))
         .route("/v1/auth/tokens/:id", axum::routing::delete(revoke_token))
+        // S01: refresh token endpoints
+        .route("/v1/auth/refresh", post(refresh_token))
+        .route("/v1/auth/logout", post(logout))
         .route("/v1/packages", get(list_packages))
         .route("/v1/packages/:name", get(get_package))
         .route("/v1/packages/:name/publish", post(publish))
@@ -89,7 +105,6 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(auth_routes)
         .merge(v1)
-        // Health and UI are unversioned
         .route("/health", get(health))
         .route("/ui/packages/:name", get(ui_package))
         .layer(cors)
@@ -105,9 +120,24 @@ struct AuthBody {
     password: String,
 }
 
+/// Returned by `POST /v1/auth/login` and `POST /v1/auth/register`.
+/// `token` is kept for backward compatibility; clients should also persist
+/// `refresh_token` to renew the access token before it expires.
 #[derive(Serialize)]
-struct TokenResponse {
+struct LoginResponse {
+    token: String,          // access token (JWT, 7 days)
+    refresh_token: String,  // opaque nxr_ token, 30 days
+}
+
+/// Returned by `POST /v1/auth/refresh`.
+#[derive(Serialize)]
+struct AccessTokenResponse {
     token: String,
+}
+
+#[derive(Deserialize)]
+struct RefreshBody {
+    refresh_token: String,
 }
 
 #[derive(Deserialize)]
@@ -182,15 +212,23 @@ async fn health() -> impl IntoResponse {
 
 async fn register(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Response {
     match state.auth.register(&body.email, &body.password).await {
-        Ok(token) => {
+        Ok(result) => {
             tracing::info!(email = %body.email, "User registered");
-            (StatusCode::CREATED, Json(TokenResponse { token })).into_response()
+            (
+                StatusCode::CREATED,
+                Json(LoginResponse {
+                    token: result.access_token,
+                    refresh_token: result.refresh_token,
+                }),
+            )
+                .into_response()
         }
         Err(e) => {
             let detail = e.to_string();
             tracing::warn!(email = %body.email, error = %detail, "Registration failed");
-            // Expose only known-safe domain messages; suppress all internal details.
-            let safe = if detail.contains("email already registered") || detail.contains("invalid email") {
+            let safe = if detail.contains("email already registered")
+                || detail.contains("invalid email")
+            {
                 detail.as_str()
             } else {
                 "registration failed"
@@ -202,16 +240,41 @@ async fn register(State(state): State<AppState>, Json(body): Json<AuthBody>) -> 
 
 async fn login(State(state): State<AppState>, Json(body): Json<AuthBody>) -> Response {
     match state.auth.login(&body.email, &body.password).await {
-        Ok(token) => {
+        Ok(result) => {
             tracing::debug!(email = %body.email, "User logged in");
-            Json(TokenResponse { token }).into_response()
+            Json(LoginResponse {
+                token: result.access_token,
+                refresh_token: result.refresh_token,
+            })
+            .into_response()
         }
         Err(e) => {
-            // Log the real cause internally; never reveal details to the caller.
             tracing::warn!(email = %body.email, error = %e, "Login failed");
             err(StatusCode::UNAUTHORIZED, "invalid credentials")
         }
     }
+}
+
+/// `POST /v1/auth/refresh` — exchange a valid refresh token for a new access token.
+async fn refresh_token(
+    State(state): State<AppState>,
+    Json(body): Json<RefreshBody>,
+) -> Response {
+    match state.auth.refresh_access(&body.refresh_token).await {
+        Ok(token) => Json(AccessTokenResponse { token }).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "Refresh token rejected");
+            err(StatusCode::UNAUTHORIZED, "invalid or expired refresh token")
+        }
+    }
+}
+
+/// `POST /v1/auth/logout` — revoke a refresh token (bearer JWT optional).
+async fn logout(State(state): State<AppState>, Json(body): Json<RefreshBody>) -> Response {
+    // Best-effort revocation: ignore errors (token may already be gone).
+    let _ = state.auth.logout(&body.refresh_token).await;
+    tracing::debug!("Refresh token revoked");
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn publish(

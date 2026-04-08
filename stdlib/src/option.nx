@@ -1,0 +1,63 @@
+// std.option — Optional value type
+// Option<T> wraps a value that may or may not be present.
+// The type parameter T is erased at compile time (JS is dynamically typed),
+// so Option works correctly for any value type at runtime.
+//
+// Usage:
+//   import std.option.Option;
+//   let o = Option(42, true);    // Some(42)
+//   let n = Option(0, false);    // None
+//   if (o.isSome()) { let v = o.get(); }
+
+package std.option;
+
+public class Option<T> {
+    private Bool hasValue;
+    private T value;
+
+    constructor(val: T, present: Bool) {
+        this.value = val;
+        this.hasValue = present;
+    }
+
+    // True when a value is present.
+    isSome() => Bool {
+        return this.hasValue;
+    }
+
+    // True when no value is present.
+    isNone() => Bool {
+        return this.hasValue == false;
+    }
+
+    // Return the wrapped value.
+    // Only call when isSome() is true.
+    get() => T {
+        return this.value;
+    }
+
+    // Return the wrapped value or fallback if None.
+    unwrapOr(fallback: T) => T {
+        if (this.hasValue) {
+            return this.value;
+        }
+        return fallback;
+    }
+
+    // Apply a transformation and return the result, or fallback if None.
+    // fn is a function (T) => T applied to the inner value.
+    map(fn: (T) => T, fallback: T) => T {
+        if (this.hasValue) {
+            return fn(this.value);
+        }
+        return fallback;
+    }
+
+    // True when a value is present and equals other.
+    contains(other: T) => Bool {
+        if (this.hasValue) {
+            return this.value == other;
+        }
+        return false;
+    }
+}

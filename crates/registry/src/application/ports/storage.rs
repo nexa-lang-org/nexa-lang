@@ -1,9 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::{
     package::{Package, PackageVersion},
+    refresh_token::RefreshToken,
     token::ApiToken,
     user::User,
 };
@@ -27,6 +29,23 @@ pub trait TokenStore: Send + Sync {
     async fn list_for_user(&self, user_id: Uuid) -> Result<Vec<ApiToken>>;
     /// Delete a token by its id, scoped to the owner.
     async fn delete(&self, id: Uuid, user_id: Uuid) -> Result<bool>;
+}
+
+#[async_trait]
+pub trait RefreshTokenStore: Send + Sync {
+    /// Persist a new refresh token (only the hash is stored).
+    async fn create(
+        &self,
+        user_id: Uuid,
+        token_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<RefreshToken>;
+    /// Look up a refresh token by its hash; returns `None` if not found.
+    async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>>;
+    /// Delete a refresh token by hash (logout). Returns true if a row was removed.
+    async fn delete_by_hash(&self, token_hash: &str) -> Result<bool>;
+    /// Prune all expired tokens. Returns the count removed.
+    async fn delete_expired(&self) -> Result<u64>;
 }
 
 #[async_trait]

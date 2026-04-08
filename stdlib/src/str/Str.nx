@@ -1,0 +1,112 @@
+package std.str;
+
+// Str — String utilities.
+// Pure-Nexa methods and thin bridges to JS String.prototype.
+//
+// Usage:
+//   import std.str.Str;
+//   let s = Str();
+//   let up = s.toUpperCase("hello");  // => "HELLO"
+//   let i  = s.indexOf("hello", "ll"); // => 2
+
+public class Str {
+    constructor() {}
+
+    // ── Predicates ────────────────────────────────────────────────────────────
+
+    isEmpty(value: String) => Bool { return value == ""; }
+    contains(value: String, sub: String) => Bool { return value.includes(sub); }
+    startsWith(value: String, prefix: String) => Bool { return value.startsWith(prefix); }
+    endsWith(value: String, suffix: String) => Bool { return value.endsWith(suffix); }
+
+    // ── Measurements ──────────────────────────────────────────────────────────
+
+    // Number of UTF-16 code units (same as JS .length).
+    length(value: String) => Int { return value.length; }
+
+    // ── Case ──────────────────────────────────────────────────────────────────
+
+    toUpperCase(value: String) => String { return value.toUpperCase(); }
+    toLowerCase(value: String) => String { return value.toLowerCase(); }
+
+    // ── Whitespace ────────────────────────────────────────────────────────────
+
+    trim(value: String) => String { return value.trim(); }
+    trimStart(value: String) => String { return value.trimStart(); }
+    trimEnd(value: String) => String { return value.trimEnd(); }
+
+    // ── Search ────────────────────────────────────────────────────────────────
+
+    // Index of the first occurrence of sub, or -1.
+    indexOf(value: String, sub: String) => Int { return _strIndexOf(value, sub); }
+
+    // Index of the last occurrence of sub, or -1.
+    lastIndexOf(value: String, sub: String) => Int { return _strLastIndexOf(value, sub); }
+
+    // ── Access ────────────────────────────────────────────────────────────────
+
+    // Character at position i (as a one-character String).
+    charAt(value: String, i: Int) => String { return _strCharAt(value, i); }
+
+    // UTF-16 code unit at position i.
+    codeAt(value: String, i: Int) => Int { return _strCodeAt(value, i); }
+
+    // String from a single UTF-16 code unit.
+    fromCode(code: Int) => String { return _strFromCode(code); }
+
+    // Substring from start (inclusive) to end (exclusive).
+    slice(value: String, from: Int, to: Int) => String { return _strSlice(value, from, to); }
+
+    // ── Transform ─────────────────────────────────────────────────────────────
+
+    concat(a: String, b: String) => String { return a + b; }
+
+    // Replace all occurrences of from with to.
+    replace(value: String, from: String, to: String) => String { return _strReplace(value, from, to); }
+
+    // Repeat value n times.
+    repeat(value: String, times: Int) => String {
+        let result: String = "";
+        let i: Int = 0;
+        while (i < times) { result = result + value; i = i + 1; }
+        return result;
+    }
+
+    // Build a String of count copies of char.
+    fill(char: String, count: Int) => String {
+        let result: String = "";
+        let i: Int = 0;
+        while (i < count) { result = result + char; i = i + 1; }
+        return result;
+    }
+
+    // Pad start to reach length len, filling with pad.
+    padStart(value: String, len: Int, pad: String) => String { return _strPadStart(value, len, pad); }
+
+    // Pad end to reach length len, filling with pad.
+    padEnd(value: String, len: Int, pad: String) => String { return _strPadEnd(value, len, pad); }
+
+    // ── Conversion ────────────────────────────────────────────────────────────
+
+    // Parse a decimal integer string. Returns 0 on failure.
+    parseInt(value: String) => Int { return _strParseInt(value); }
+
+    // Integer to its decimal string representation.
+    fromInt(n: Int) => String { return _strFromInt(n); }
+
+    // Boolean to "true" or "false".
+    fromBool(b: Bool) => String { return _strFromBool(b); }
+
+    // ── Splitting ─────────────────────────────────────────────────────────────
+
+    // Split value by sep into a list of strings.
+    split(value: String, sep: String) => List<String> { return _strSplit(value, sep); }
+
+    // ── Encoding ─────────────────────────────────────────────────────────────
+
+    // Base-64 encode a string.
+    base64Encode(value: String) => String { return _strBase64Encode(value); }
+
+    // Base-64 decode a string.
+    base64Decode(value: String) => String { return _strBase64Decode(value); }
+}

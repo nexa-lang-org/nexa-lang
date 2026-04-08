@@ -1,0 +1,53 @@
+package std.collections;
+
+// Queue<T> — FIFO queue backed by _NexaList with a head pointer.
+//
+// Usage:
+//   import std.collections.Queue;
+//   let q = Queue();
+//   q.enqueue(1); q.enqueue(2);
+//   let first = q.dequeue();  // => 1
+
+public class Queue<T> {
+    private List<T> data;
+    private Int head;
+    private Int _len;
+
+    constructor() {
+        this.data = [];
+        this.head = 0;
+        this._len = 0;
+    }
+
+    // Add item to the back of the queue.
+    enqueue(item: T) => Void {
+        this.data.push(item);
+        this._len = this._len + 1;
+        return;
+    }
+
+    // Remove and return the front item.
+    // Only call when isEmpty() is false.
+    dequeue() => T {
+        let item: T = this.data.get(this.head);
+        this.head = this.head + 1;
+        this._len = this._len - 1;
+        return item;
+    }
+
+    // Return the front item without removing it.
+    // Only call when isEmpty() is false.
+    front() => T {
+        return this.data.get(this.head);
+    }
+
+    // True when the queue contains no items.
+    isEmpty() => Bool {
+        return this._len == 0;
+    }
+
+    // Number of items currently in the queue.
+    size() => Int {
+        return this._len;
+    }
+}

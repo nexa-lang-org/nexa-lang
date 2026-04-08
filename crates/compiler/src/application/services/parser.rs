@@ -26,11 +26,19 @@ impl ParseError {
 pub struct Parser {
     tokens: Vec<Spanned>,
     pos: usize,
+    /// Non-fatal errors accumulated during recovery (panic-mode).
+    collected_errors: Vec<ParseError>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Spanned>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser { tokens, pos: 0, collected_errors: Vec::new() }
+    }
+
+    /// Errors collected via panic-mode recovery during the last parse call.
+    /// These are in addition to any fatal error returned by `parse()`.
+    pub fn collected_errors(&self) -> &[ParseError] {
+        &self.collected_errors
     }
 
     // ── Token navigation ────────────────────────────────────────────────────
@@ -68,11 +76,18 @@ impl Parser {
 
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         let s = self.peek_spanned();
-        if let Token::Ident(name) = s.token {
-            self.advance();
-            Ok(name)
-        } else {
-            Err(ParseError::Expected("identifier".into(), s.token, s.span))
+        match s.token {
+            Token::Ident(name) => {
+                self.advance();
+                Ok(name)
+            }
+            // Contextual keywords: valid as identifiers when in identifier position.
+            Token::Test  => { self.advance(); Ok("test".into()) }
+            Token::Match => { self.advance(); Ok("match".into()) }
+            Token::Enum  => { self.advance(); Ok("enum".into()) }
+            Token::Async  => { self.advance(); Ok("async".into()) }
+            Token::Server => { self.advance(); Ok("server".into()) }
+            _ => Err(ParseError::Expected("identifier".into(), s.token, s.span)),
         }
     }
 
@@ -81,11 +96,19 @@ impl Parser {
     fn parse_dotted_ident(&mut self) -> Result<String, ParseError> {
         let mut parts = vec![self.expect_ident()?];
         while self.peek() == &Token::Dot {
-            // only consume the dot if followed by an ident
+            // only consume the dot if followed by an ident or a contextual keyword
             if self
                 .tokens
                 .get(self.pos + 1)
-                .map(|s| matches!(s.token, Token::Ident(_)))
+                .map(|s| matches!(
+                    s.token,
+                    Token::Ident(_)
+                        | Token::Test
+                        | Token::Match
+                        | Token::Enum
+                        | Token::Async
+                        | Token::Server
+                ))
                 .unwrap_or(false)
             {
                 self.advance(); // dot
@@ -136,7 +159,8 @@ impl Parser {
                 | Token::Class
                 | Token::Interface
                 | Token::Component
-                | Token::Window => {
+                | Token::Window
+                | Token::Enum => {
                     declarations.push(self.parse_declaration()?);
                 }
                 _ => {
@@ -174,7 +198,14 @@ impl Parser {
             imports.push(ImportDecl { path });
         }
         while self.peek() != &Token::Eof {
-            declarations.push(self.parse_declaration()?);
+            match self.peek() {
+                Token::Test => {
+                    declarations.push(self.parse_test_decl()?);
+                }
+                _ => {
+                    declarations.push(self.parse_declaration()?);
+                }
+            }
         }
         Ok(Program {
             name: String::new(),
@@ -241,7 +272,7 @@ impl Parser {
         }
     }
 
-    // ── Declaration (class | interface) ────────────────────────────────────
+    // ── Declaration (class | interface | enum) ──────────────────────────────
     fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
         let vis = self.parse_visibility();
         match self.peek() {
@@ -255,11 +286,75 @@ impl Parser {
                 cls.visibility = vis;
                 Ok(Declaration::Class(cls))
             }
+            Token::Enum => {
+                let mut en = self.parse_enum()?;
+                en.visibility = vis;
+                Ok(Declaration::Enum(en))
+            }
             _ => {
                 let s = self.peek_spanned();
                 Err(ParseError::Unexpected(s.token, s.span))
             }
         }
+    }
+
+    // ── Enum declaration ─────────────────────────────────────────────────────
+    // enum Color { Red, Green, Blue }
+    // enum Shape { Circle(Int), Rectangle(Int, Int), Point }
+    fn parse_enum(&mut self) -> Result<EnumDecl, ParseError> {
+        self.expect(&Token::Enum)?;
+        let name = self.expect_ident()?;
+        self.expect(&Token::LBrace)?;
+        let mut variants = Vec::new();
+
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            let vname = self.expect_ident()?;
+            let fields = if self.peek() == &Token::LParen {
+                self.advance(); // (
+                let mut flds = Vec::new();
+                while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                    flds.push(self.parse_type()?);
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    }
+                }
+                self.expect(&Token::RParen)?;
+                flds
+            } else {
+                vec![]
+            };
+            variants.push(EnumVariant { name: vname, fields });
+            if self.peek() == &Token::Comma {
+                self.advance();
+            }
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(EnumDecl {
+            visibility: Visibility::Public,
+            name,
+            variants,
+        })
+    }
+
+    // ── Test declaration ─────────────────────────────────────────────────────
+    // test "description" { stmts }
+    fn parse_test_decl(&mut self) -> Result<Declaration, ParseError> {
+        self.expect(&Token::Test)?;
+        let name = if let Token::StringLit(s) = self.peek().clone() {
+            self.advance();
+            s
+        } else {
+            let s = self.peek_spanned();
+            return Err(ParseError::Expected(
+                "test name string".into(),
+                s.token,
+                s.span,
+            ));
+        };
+        self.expect(&Token::LBrace)?;
+        let body = self.parse_body()?;
+        self.expect(&Token::RBrace)?;
+        Ok(Declaration::Test(TestDecl { name, body }))
     }
 
     // ── Generic type params <T, U> ──────────────────────────────────────────
@@ -406,7 +501,7 @@ impl Parser {
                 }
                 Token::Public | Token::Private => {
                     let vis = self.parse_visibility();
-                    if self.is_type_start() {
+                    if self.is_type_start() || self.is_custom_type_field_start() {
                         let ty = self.parse_type()?;
                         let fname = self.expect_ident()?;
                         self.expect(&Token::Semicolon)?;
@@ -420,7 +515,7 @@ impl Parser {
                         methods.push(self.parse_method(vis)?);
                     }
                 }
-                _ if self.is_type_start() => {
+                _ if self.is_type_start() || self.is_custom_type_field_start() => {
                     let ty = self.parse_type()?;
                     let fname = self.expect_ident()?;
                     self.expect(&Token::Semicolon)?;
@@ -457,7 +552,22 @@ impl Parser {
         matches!(
             self.peek(),
             Token::TInt | Token::TString | Token::TBool | Token::TVoid | Token::TList
+                | Token::LParen  // function-typed field: (T) => R fieldName;
         )
+    }
+
+    /// Returns `true` when the current token is a custom-type identifier that starts
+    /// a **field declaration** (not a method).  Uses 2-token lookahead: the current
+    /// token must be an `Ident` (the type name, e.g. `T` or `MyClass`) and the next
+    /// token must also be an `Ident` (the field name).  This distinguishes
+    /// `private T value;` (field) from `private render()` (method).
+    fn is_custom_type_field_start(&self) -> bool {
+        if matches!(self.peek(), Token::Ident(_)) {
+            if let Some(next) = self.tokens.get(self.pos + 1) {
+                return matches!(next.token, Token::Ident(_));
+            }
+        }
+        false
     }
 
     fn parse_method(&mut self, vis: Visibility) -> Result<Method, ParseError> {
@@ -521,11 +631,45 @@ impl Parser {
         })
     }
 
+    // ── Panic-mode recovery ──────────────────────────────────────────────────
+    /// Skip tokens until we reach a likely statement boundary (`;` or `}`)
+    /// so that parsing can resume after an error.
+    fn synchronize(&mut self) {
+        loop {
+            match self.peek() {
+                Token::Eof | Token::RBrace => return,
+                Token::Semicolon => {
+                    self.advance();
+                    return;
+                }
+                // Keyword that starts a new statement — stop before consuming it
+                Token::Return
+                | Token::Let
+                | Token::If
+                | Token::While
+                | Token::For
+                | Token::Break
+                | Token::Continue
+                | Token::Match => return,
+                _ => { self.advance(); }
+            }
+        }
+    }
+
     // ── Statement body ──────────────────────────────────────────────────────
+    /// Parse a sequence of statements, recovering from errors at statement
+    /// boundaries instead of aborting on the first failure.
     fn parse_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut stmts = Vec::new();
         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-            stmts.push(self.parse_stmt()?);
+            match self.parse_stmt() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(e) => {
+                    // Record the error and skip to the next safe boundary.
+                    self.collected_errors.push(e);
+                    self.synchronize();
+                }
+            }
         }
         Ok(stmts)
     }
@@ -534,29 +678,15 @@ impl Parser {
         match self.peek().clone() {
             // return [expr];
             Token::Return => {
+                let span = self.peek_spanned().span;
                 self.advance();
                 if self.peek() == &Token::Semicolon {
                     self.advance();
-                    return Ok(Stmt::Return(None));
+                    return Ok(Stmt::Return { expr: None, span });
                 }
                 let expr = self.parse_expr()?;
                 self.expect(&Token::Semicolon)?;
-                Ok(Stmt::Return(Some(expr)))
-            }
-
-            // this.field = expr;
-            Token::This => {
-                self.advance();
-                self.expect(&Token::Dot)?;
-                let field = self.expect_ident()?;
-                self.expect(&Token::Equals)?;
-                let value = self.parse_expr()?;
-                self.expect(&Token::Semicolon)?;
-                Ok(Stmt::Assign {
-                    object: Expr::This,
-                    field,
-                    value,
-                })
+                Ok(Stmt::Return { expr: Some(expr), span })
             }
 
             // let name [: Type] = expr;
@@ -638,20 +768,42 @@ impl Parser {
                 Ok(Stmt::Continue)
             }
 
-            // expr;  — or  ident = expr;  (local variable assignment)
+            // match (expr) { pattern => { body } ... }
+            Token::Match => {
+                self.parse_match_stmt()
+            }
+
+            // expr;  — or  ident = expr;  — or  this.field = expr;
             _ => {
                 let expr = self.parse_expr()?;
-                // If followed by `=`, it's a local assignment: ident = value;
                 if self.peek() == &Token::Equals {
-                    if let Expr::Ident(name) = expr {
-                        self.advance(); // =
-                        let value = self.parse_expr()?;
-                        self.expect(&Token::Semicolon)?;
-                        return Ok(Stmt::Assign {
-                            object: Expr::Ident(name.clone()),
-                            field: name,
-                            value,
-                        });
+                    match expr {
+                        // ident = value;  (local variable assignment)
+                        Expr::Ident(name) => {
+                            self.advance(); // =
+                            let value = self.parse_expr()?;
+                            self.expect(&Token::Semicolon)?;
+                            return Ok(Stmt::Assign {
+                                object: Expr::Ident(name.clone()),
+                                field: name,
+                                value,
+                            });
+                        }
+                        // this.field = value;  (field assignment)
+                        Expr::FieldAccess(ref obj, ref field)
+                            if matches!(**obj, Expr::This) =>
+                        {
+                            let field = field.clone();
+                            self.advance(); // =
+                            let value = self.parse_expr()?;
+                            self.expect(&Token::Semicolon)?;
+                            return Ok(Stmt::Assign {
+                                object: Expr::This,
+                                field,
+                                value,
+                            });
+                        }
+                        _ => {}
                     }
                 }
                 self.expect(&Token::Semicolon)?;
@@ -912,6 +1064,79 @@ impl Parser {
         self.expect(&Token::RParen)?;
         Ok(args)
     }
+
+    // ── match statement ──────────────────────────────────────────────────────
+    // match (expr) {
+    //     PatternA => { body }
+    //     PatternB => { body }
+    //     _        => { body }
+    // }
+    fn parse_match_stmt(&mut self) -> Result<Stmt, ParseError> {
+        self.expect(&Token::Match)?;
+        self.expect(&Token::LParen)?;
+        let expr = self.parse_expr()?;
+        self.expect(&Token::RParen)?;
+        self.expect(&Token::LBrace)?;
+
+        let mut arms = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            let pattern = self.parse_pattern()?;
+            self.expect(&Token::FatArrow)?;
+            self.expect(&Token::LBrace)?;
+            let body = self.parse_body()?;
+            self.expect(&Token::RBrace)?;
+            arms.push(MatchArm { pattern, body });
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(Stmt::Match { expr, arms })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match self.peek().clone() {
+            Token::BoolLit(b) => {
+                self.advance();
+                Ok(Pattern::LitBool(b))
+            }
+            Token::IntLit(n) => {
+                self.advance();
+                Ok(Pattern::LitInt(n))
+            }
+            Token::StringLit(s) => {
+                self.advance();
+                Ok(Pattern::LitStr(s))
+            }
+            Token::Ident(name) => {
+                self.advance();
+                // Check for qualified variant: EnumName.VariantName
+                if self.peek() == &Token::Dot {
+                    // Lookahead: is next an ident?
+                    if self
+                        .tokens
+                        .get(self.pos + 1)
+                        .map(|s| matches!(s.token, Token::Ident(_)))
+                        .unwrap_or(false)
+                    {
+                        self.advance(); // dot
+                        let variant = self.expect_ident()?;
+                        return Ok(Pattern::QualifiedVariant {
+                            enum_name: name,
+                            variant,
+                        });
+                    }
+                }
+                // `_` is the wildcard; any other bare name is a variant/binding
+                if name == "_" {
+                    Ok(Pattern::Wildcard)
+                } else {
+                    Ok(Pattern::Name(name))
+                }
+            }
+            _ => {
+                let s = self.peek_spanned();
+                Err(ParseError::Expected("pattern".into(), s.token, s.span))
+            }
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1135,7 +1360,7 @@ mod tests {
         let src = "app A { class C { run() => Int { return 1 + 2 * 3; } } }";
         let p = parse(src);
         if let Declaration::Class(cls) = &p.declarations[0] {
-            if let Stmt::Return(Some(Expr::Binary { op: BinOp::Add, .. })) = &cls.methods[0].body[0] {
+            if let Stmt::Return { expr: Some(Expr::Binary { op: BinOp::Add, .. }), .. } = &cls.methods[0].body[0] {
                 // correct — addition is the outermost (lower precedence than *)
             } else {
                 panic!("expected binary add at top level");

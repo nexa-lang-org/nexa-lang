@@ -1,0 +1,111 @@
+package std.collections;
+
+// SynchronizedDeque<T> — Lock-guarded double-ended queue.
+//
+// Usage:
+//   import std.collections.SynchronizedDeque;
+//   let d = SynchronizedDeque();
+//   if (d.lock()) {
+//     d.addLast(x);
+//     d.unlock();
+//   }
+
+public class SynchronizedDeque<T> {
+    private List<T> _data;
+    private Int _size;
+    private Bool _locked;
+
+    constructor() {
+        this._data = [];
+        this._size = 0;
+        this._locked = false;
+    }
+
+    // Acquire the lock. Returns true if free, false if already locked.
+    lock() => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._locked = true;
+        return true;
+    }
+
+    // Release the lock.
+    unlock() => Void {
+        this._locked = false;
+        return;
+    }
+
+    // True if the lock is currently held.
+    isLocked() => Bool {
+        return this._locked;
+    }
+
+    // Add to front. Returns false (no-op) if locked.
+    tryAddFirst(item: T) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._data.prepend(item);
+        this._size = this._size + 1;
+        return true;
+    }
+
+    // Add to back. Returns false (no-op) if locked.
+    tryAddLast(item: T) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._data.push(item);
+        this._size = this._size + 1;
+        return true;
+    }
+
+    // Unconditional addFirst — use only when you hold the lock.
+    addFirst(item: T) => Void {
+        this._data.prepend(item);
+        this._size = this._size + 1;
+        return;
+    }
+
+    // Unconditional addLast — use only when you hold the lock.
+    addLast(item: T) => Void {
+        this._data.push(item);
+        this._size = this._size + 1;
+        return;
+    }
+
+    // Remove and return front item. Only call when isEmpty() is false.
+    removeFirst() => T {
+        let item: T = this._data.get(0);
+        this._data.removeAt(0);
+        this._size = this._size - 1;
+        return item;
+    }
+
+    // Remove and return back item. Only call when isEmpty() is false.
+    removeLast() => T {
+        this._size = this._size - 1;
+        return this._data.pop();
+    }
+
+    // Peek at front. Only call when isEmpty() is false.
+    peekFirst() => T {
+        return this._data.get(0);
+    }
+
+    // Peek at back. Only call when isEmpty() is false.
+    peekLast() => T {
+        return this._data.get(this._size - 1);
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

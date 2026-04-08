@@ -60,6 +60,16 @@ enum Commands {
         project: Option<PathBuf>,
     },
 
+    /// Run test blocks defined in *.nx files
+    Test {
+        /// Project root directory (default: current directory)
+        #[arg(short, long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Only run tests whose name contains FILTER
+        #[arg(value_name = "FILTER")]
+        filter: Option<String>,
+    },
+
     /// Package the project into a distributable .nexa bundle
     Package {
         /// Project root directory (default: current directory)
@@ -293,6 +303,8 @@ pub async fn run() {
             module,
             output,
         } => commands::package(project, module, output),
+
+        Commands::Test { project, filter } => commands::test(project, filter),
 
         Commands::Register { registry } => commands::register(registry),
         Commands::Login { registry } => commands::login(registry),

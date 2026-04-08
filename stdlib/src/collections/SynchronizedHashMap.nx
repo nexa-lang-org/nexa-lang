@@ -1,0 +1,151 @@
+package std.collections;
+
+// SynchronizedHashMap<K, V> — Lock-guarded key-value map.
+//
+// Usage:
+//   import std.collections.SynchronizedHashMap;
+//   let m = SynchronizedHashMap();
+//   if (m.lock()) {
+//     m.put("k", "v");
+//     m.unlock();
+//   }
+
+public class SynchronizedHashMap<K, V> {
+    private List<K> _keys;
+    private List<V> _values;
+    private Int _size;
+    private Bool _locked;
+
+    constructor() {
+        this._keys = [];
+        this._values = [];
+        this._size = 0;
+        this._locked = false;
+    }
+
+    // Acquire the lock. Returns true if free, false if already locked.
+    lock() => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._locked = true;
+        return true;
+    }
+
+    // Release the lock.
+    unlock() => Void {
+        this._locked = false;
+        return;
+    }
+
+    // True if the lock is currently held.
+    isLocked() => Bool {
+        return this._locked;
+    }
+
+    // Insert or update. Returns false (no-op) if locked.
+    tryPut(key: K, value: V) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                this._values.set(i, value);
+                break;
+            }
+            i = i + 1;
+        }
+        if (i == this._size) {
+            this._keys.push(key);
+            this._values.push(value);
+            this._size = this._size + 1;
+        }
+        return true;
+    }
+
+    // Unconditional put — use only when you hold the lock.
+    put(key: K, value: V) => Void {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                this._values.set(i, value);
+                break;
+            }
+            i = i + 1;
+        }
+        if (i == this._size) {
+            this._keys.push(key);
+            this._values.push(value);
+            this._size = this._size + 1;
+        }
+        return;
+    }
+
+    // Return the value for key. Caller must ensure containsKey is true.
+    get(key: K) => V {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                return this._values.get(i);
+            }
+            i = i + 1;
+        }
+        return this._values.get(0);
+    }
+
+    // True if key exists.
+    containsKey(key: K) => Bool {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // Remove entry. Returns false if locked.
+    tryRemove(key: K) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                this._keys.removeAt(i);
+                this._values.removeAt(i);
+                this._size = this._size - 1;
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // Unconditional remove — use only when you hold the lock.
+    remove(key: K) => Void {
+        let i: Int = 0;
+        while (i < this._size) {
+            if (this._keys.get(i) == key) {
+                this._keys.removeAt(i);
+                this._values.removeAt(i);
+                this._size = this._size - 1;
+                return;
+            }
+            i = i + 1;
+        }
+        return;
+    }
+
+    // Number of entries.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

@@ -1,0 +1,90 @@
+package std.str;
+
+// StringBuilder — Mutable string accumulator with fluent API.
+// Avoids repeated string allocation by accumulating into a buffer.
+//
+// Usage:
+//   import std.str.StringBuilder;
+//   let sb = StringBuilder();
+//   sb.append("Hello")
+//     .append(", ")
+//     .append("world")
+//     .appendLine("!");
+//   let result = sb.toString();  // "Hello, world!\n"
+
+public class StringBuilder {
+    private String _buf;
+    private Int _len;
+
+    constructor() {
+        this._buf = "";
+        this._len = 0;
+    }
+
+    // Append a string. Returns this for chaining.
+    append(s: String) => StringBuilder {
+        this._buf = this._buf + s;
+        this._len = this._len + s.length;
+        return this;
+    }
+
+    // Append a string followed by a newline. Returns this for chaining.
+    appendLine(s: String) => StringBuilder {
+        this._buf = this._buf + s + "\n";
+        this._len = this._len + s.length + 1;
+        return this;
+    }
+
+    // Append an integer as its decimal string. Returns this for chaining.
+    appendInt(n: Int) => StringBuilder {
+        let s: String = _strFromInt(n);
+        this._buf = this._buf + s;
+        this._len = this._len + s.length;
+        return this;
+    }
+
+    // Append a boolean as "true" or "false". Returns this for chaining.
+    appendBool(b: Bool) => StringBuilder {
+        let s: String = _strFromBool(b);
+        this._buf = this._buf + s;
+        this._len = this._len + s.length;
+        return this;
+    }
+
+    // Prepend a string to the front. Returns this for chaining.
+    prepend(s: String) => StringBuilder {
+        this._buf = s + this._buf;
+        this._len = s.length + this._len;
+        return this;
+    }
+
+    // Append a newline character. Returns this for chaining.
+    newLine() => StringBuilder {
+        this._buf = this._buf + "\n";
+        this._len = this._len + 1;
+        return this;
+    }
+
+    // Append a tab character. Returns this for chaining.
+    tab() => StringBuilder {
+        this._buf = this._buf + "\t";
+        this._len = this._len + 1;
+        return this;
+    }
+
+    // Return the accumulated string.
+    toString() => String { return this._buf; }
+
+    // Number of characters accumulated (UTF-16 units).
+    length() => Int { return this._len; }
+
+    // True when the buffer is empty.
+    isEmpty() => Bool { return this._len == 0; }
+
+    // Reset the buffer to empty. Returns this for chaining.
+    clear() => StringBuilder {
+        this._buf = "";
+        this._len = 0;
+        return this;
+    }
+}

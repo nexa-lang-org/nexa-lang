@@ -115,4 +115,18 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d --no-deps registry
             docker image prune -f
 
+            # I03: wait for the registry to accept requests before reporting success.
+            echo "Waiting for registry health-check…"
+            for i in $(seq 1 15); do
+              if curl -sf http://localhost:4000/health > /dev/null; then
+                echo "Registry healthy after ${i}s"
+                break
+              fi
+              if [ "$i" -eq 15 ]; then
+                echo "::error::Registry did not become healthy within 15s"
+                exit 1
+              fi
+              sleep 1
+            done
+
             echo "Deploy complete — $(date -u '+%Y-%m-%d %H:%M UTC')"

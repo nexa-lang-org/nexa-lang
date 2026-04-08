@@ -1,0 +1,172 @@
+package std.math;
+
+// Math — Integer arithmetic utilities.
+// All operations work on Int (64-bit integers).
+// Float-like operations (sqrt, random) are handled by runtime helpers
+// that bridge to JavaScript's native Math object.
+//
+// Usage:
+//   import std.math.Math;
+//   let m = Math();
+//   let r = m.sqrt(16);    // => 4
+//   let p = m.isPrime(17); // => true
+
+public class Math {
+    constructor() {}
+
+    // ── Basic ──────────────────────────────────────────────────────────────────
+
+    abs(value: Int) => Int {
+        if (value < 0) { return 0 - value; }
+        return value;
+    }
+
+    max(a: Int, b: Int) => Int {
+        if (a > b) { return a; }
+        return b;
+    }
+
+    min(a: Int, b: Int) => Int {
+        if (a < b) { return a; }
+        return b;
+    }
+
+    clamp(value: Int, low: Int, high: Int) => Int {
+        if (value < low) { return low; }
+        if (value > high) { return high; }
+        return value;
+    }
+
+    sign(value: Int) => Int {
+        if (value > 0) { return 1; }
+        if (value < 0) { return 0 - 1; }
+        return 0;
+    }
+
+    // ── Arithmetic ─────────────────────────────────────────────────────────────
+
+    // Integer power: pow(2, 10) => 1024
+    pow(base: Int, exp: Int) => Int {
+        let result: Int = 1;
+        let i: Int = 0;
+        while (i < exp) {
+            result = result * base;
+            i = i + 1;
+        }
+        return result;
+    }
+
+    // Floor integer square root: sqrt(17) => 4
+    sqrt(n: Int) => Int {
+        if (n < 1) { return 0; }
+        if (n == 1) { return 1; }
+        let x: Int = n;
+        let prev: Int = 0;
+        while (x != prev) {
+            prev = x;
+            x = (x + n / x) / 2;
+        }
+        return x;
+    }
+
+    // Floor log base 2: log2(8) => 3, log2(9) => 3
+    log2(n: Int) => Int {
+        if (n < 1) { return 0; }
+        let result: Int = 0;
+        let x: Int = n;
+        while (x > 1) {
+            x = x / 2;
+            result = result + 1;
+        }
+        return result;
+    }
+
+    // Pseudo-random integer in [0, max). Bridges to JS Math.random().
+    random(max: Int) => Int {
+        return _mathRandom(max);
+    }
+
+    // ── Number theory ─────────────────────────────────────────────────────────
+
+    isEven(value: Int) => Bool { return value % 2 == 0; }
+    isOdd(value: Int) => Bool { return value % 2 != 0; }
+
+    // Greatest common divisor (Euclidean algorithm).
+    gcd(a: Int, b: Int) => Int {
+        let x: Int = a;
+        let y: Int = b;
+        while (y != 0) {
+            let tmp: Int = y;
+            y = x % y;
+            x = tmp;
+        }
+        return x;
+    }
+
+    // Least common multiple.
+    lcm(a: Int, b: Int) => Int {
+        let g: Int = this.gcd(a, b);
+        if (g == 0) { return 0; }
+        return (a / g) * b;
+    }
+
+    // True when n is a prime number (n >= 2).
+    isPrime(n: Int) => Bool {
+        if (n < 2) { return false; }
+        if (n == 2) { return true; }
+        if (n % 2 == 0) { return false; }
+        let i: Int = 3;
+        let sq: Int = this.sqrt(n);
+        while (i <= sq) {
+            if (n % i == 0) { return false; }
+            i = i + 2;
+        }
+        return true;
+    }
+
+    // ── Sequences ─────────────────────────────────────────────────────────────
+
+    // Sum of integers 1..n: sumTo(5) => 15
+    sumTo(n: Int) => Int {
+        let result: Int = 0;
+        let i: Int = 1;
+        while (i <= n) {
+            result = result + i;
+            i = i + 1;
+        }
+        return result;
+    }
+
+    // Factorial: factorial(5) => 120
+    factorial(n: Int) => Int {
+        let result: Int = 1;
+        let i: Int = 2;
+        while (i <= n) {
+            result = result * i;
+            i = i + 1;
+        }
+        return result;
+    }
+
+    // nth Fibonacci number (0-indexed): fibonacci(0)=>0, fibonacci(7)=>13
+    fibonacci(n: Int) => Int {
+        if (n <= 0) { return 0; }
+        if (n == 1) { return 1; }
+        let a: Int = 0;
+        let b: Int = 1;
+        let i: Int = 2;
+        while (i <= n) {
+            let tmp: Int = a + b;
+            a = b;
+            b = tmp;
+            i = i + 1;
+        }
+        return b;
+    }
+
+    // π approximation scaled by 100000: pi() => 314159
+    pi() => Int { return 314159; }
+
+    // Euler's number scaled by 100000: e() => 271828
+    e() => Int { return 271828; }
+}

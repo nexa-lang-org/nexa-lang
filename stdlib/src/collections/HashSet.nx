@@ -1,0 +1,58 @@
+package std.collections;
+
+// HashSet<T> — Unordered set of unique values backed by _NexaList.
+//
+// Usage:
+//   import std.collections.HashSet;
+//   let s = HashSet();
+//   s.add(1); s.add(2); s.add(1);
+//   s.size();       // => 2
+//   s.contains(1);  // => true
+
+public class HashSet<T> {
+    private List<T> _data;
+    private Int _size;
+
+    constructor() {
+        this._data = [];
+        this._size = 0;
+    }
+
+    // Add item if not already present.
+    // Returns true if added, false if duplicate.
+    add(item: T) => Bool {
+        if (this._data.contains(item)) {
+            return false;
+        }
+        this._data.push(item);
+        this._size = this._size + 1;
+        return true;
+    }
+
+    // True if item is in the set.
+    contains(item: T) => Bool {
+        return this._data.contains(item);
+    }
+
+    // Remove item from the set.
+    // Returns true if removed, false if not found.
+    remove(item: T) => Bool {
+        let i: Int = this._data.indexOf(item);
+        if (i == -1) {
+            return false;
+        }
+        this._data.removeAt(i);
+        this._size = this._size - 1;
+        return true;
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

@@ -1,0 +1,63 @@
+package std.io;
+
+// File — Async file-system operations (Node.js only).
+// All async methods must be called with `await` inside an `async` method.
+// In a browser context the methods return empty/false values gracefully.
+//
+// Usage:
+//   import std.io.File;
+//   let f = File();
+//   let content = await f.readFile("data.txt");
+//   await f.writeFile("out.txt", content);
+
+public class File {
+    constructor() {}
+
+    // Read the entire content of a file as a String.
+    // Returns "" if the file does not exist or cannot be read.
+    async readFile(path: String) => String {
+        return await _fileRead(path);
+    }
+
+    // Write data to a file, creating or overwriting it.
+    // Returns true on success, false on failure.
+    async writeFile(path: String, data: String) => Bool {
+        return await _fileWrite(path, data);
+    }
+
+    // Append data to a file (creates it if it does not exist).
+    // Returns true on success, false on failure.
+    async appendFile(path: String, data: String) => Bool {
+        return await _fileAppend(path, data);
+    }
+
+    // True if the file or directory exists.
+    async exists(path: String) => Bool {
+        return await _fileExists(path);
+    }
+
+    // Delete a file. Returns true on success, false if not found.
+    async deleteFile(path: String) => Bool {
+        return await _fileDelete(path);
+    }
+
+    // Create a directory (including all parents). Returns true on success.
+    async mkdir(path: String) => Bool {
+        return await _fileMkdir(path);
+    }
+
+    // List entries in a directory. Returns a list of file/dir names.
+    async listDir(path: String) => List<String> {
+        return await _fileListDir(path);
+    }
+
+    // Return the byte size of a file, or -1 if unavailable.
+    async size(path: String) => Int {
+        return await _fileSize(path);
+    }
+
+    // Copy a file from src to dst. Returns true on success.
+    async copyFile(src: String, dst: String) => Bool {
+        return await _fileCopy(src, dst);
+    }
+}

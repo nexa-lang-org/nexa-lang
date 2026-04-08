@@ -79,6 +79,16 @@ pub enum IrUnOp {
 
 // ── Statements ────────────────────────────────────────────────────────────────
 
+/// One arm of a compiled `match` expression.
+#[derive(Debug, Clone)]
+pub struct IrMatchArm {
+    /// The condition to test; `None` means wildcard / else branch.
+    pub condition: Option<IrExpr>,
+    /// Variable bindings introduced by the pattern (`let name = subject`).
+    pub bindings: Vec<(String, IrExpr)>,
+    pub body: Vec<IrStmt>,
+}
+
 #[derive(Debug, Clone)]
 pub enum IrStmt {
     /// `let name: ty = init`
@@ -97,6 +107,14 @@ pub enum IrStmt {
     Continue,
     /// Expression used as statement (side effects).
     Discard(IrExpr),
+    /// `match (subject_var) { arms... }` — compiled to an if-else chain.
+    Match {
+        /// Name of the temporary variable holding the matched expression.
+        subject_var: String,
+        /// The matched expression (initialises subject_var).
+        subject: IrExpr,
+        arms: Vec<IrMatchArm>,
+    },
 }
 
 // ── Top-level definitions ─────────────────────────────────────────────────────
@@ -159,12 +177,29 @@ pub struct IrRoute {
     pub target: String,
 }
 
+// ── Enum / ADT ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct IrEnumVariant {
+    pub name: String,
+    /// Number of tuple fields (0 for unit variants like `Red`).
+    pub field_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrEnum {
+    pub name: String,
+    pub is_public: bool,
+    pub variants: Vec<IrEnumVariant>,
+}
+
 /// The root IR module — one per Nexa source file / module.
 #[derive(Debug, Clone)]
 pub struct IrModule {
     /// Application name (from `app Foo { }` or package declaration).
     pub name: String,
     pub server: Option<IrServer>,
+    pub enums: Vec<IrEnum>,
     pub classes: Vec<IrClass>,
     pub routes: Vec<IrRoute>,
 }

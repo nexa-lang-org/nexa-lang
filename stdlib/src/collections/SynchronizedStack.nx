@@ -1,0 +1,86 @@
+package std.collections;
+
+// SynchronizedStack<T> — Lock-guarded LIFO stack.
+//
+// JS is single-threaded; the lock protects against re-entrant async callbacks
+// that could interleave mutations across an await boundary.
+//
+// Usage:
+//   import std.collections.SynchronizedStack;
+//   let s = SynchronizedStack();
+//   if (s.lock()) {
+//     s.push(x);
+//     s.unlock();
+//   }
+//   // Or use the checked variant:
+//   let ok = s.tryPush(x);  // no-op and returns false if locked
+
+public class SynchronizedStack<T> {
+    private List<T> _data;
+    private Int _len;
+    private Bool _locked;
+
+    constructor() {
+        this._data = [];
+        this._len = 0;
+        this._locked = false;
+    }
+
+    // Acquire the lock. Returns true if the lock was free, false if already locked.
+    lock() => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._locked = true;
+        return true;
+    }
+
+    // Release the lock.
+    unlock() => Void {
+        this._locked = false;
+        return;
+    }
+
+    // True if the lock is currently held.
+    isLocked() => Bool {
+        return this._locked;
+    }
+
+    // Push item. Returns false (no-op) if locked.
+    tryPush(item: T) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._data.push(item);
+        this._len = this._len + 1;
+        return true;
+    }
+
+    // Unconditional push — use only when you hold the lock.
+    push(item: T) => Void {
+        this._data.push(item);
+        this._len = this._len + 1;
+        return;
+    }
+
+    // Pop. Only call when isEmpty() is false.
+    pop() => T {
+        this._len = this._len - 1;
+        return this._data.pop();
+    }
+
+    // Peek at top without removing. Only call when isEmpty() is false.
+    peek() => T {
+        return this._data.get(this._len - 1);
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._len == 0;
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._len;
+    }
+}

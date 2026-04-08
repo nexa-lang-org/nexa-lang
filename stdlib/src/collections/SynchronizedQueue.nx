@@ -1,0 +1,85 @@
+package std.collections;
+
+// SynchronizedQueue<T> — Lock-guarded FIFO queue.
+//
+// Usage:
+//   import std.collections.SynchronizedQueue;
+//   let q = SynchronizedQueue();
+//   if (q.lock()) {
+//     q.enqueue(x);
+//     q.unlock();
+//   }
+
+public class SynchronizedQueue<T> {
+    private List<T> _data;
+    private Int _head;
+    private Int _len;
+    private Bool _locked;
+
+    constructor() {
+        this._data = [];
+        this._head = 0;
+        this._len = 0;
+        this._locked = false;
+    }
+
+    // Acquire the lock. Returns true if free, false if already locked.
+    lock() => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._locked = true;
+        return true;
+    }
+
+    // Release the lock.
+    unlock() => Void {
+        this._locked = false;
+        return;
+    }
+
+    // True if the lock is currently held.
+    isLocked() => Bool {
+        return this._locked;
+    }
+
+    // Enqueue item. Returns false (no-op) if locked.
+    tryEnqueue(item: T) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._data.push(item);
+        this._len = this._len + 1;
+        return true;
+    }
+
+    // Unconditional enqueue — use only when you hold the lock.
+    enqueue(item: T) => Void {
+        this._data.push(item);
+        this._len = this._len + 1;
+        return;
+    }
+
+    // Dequeue. Only call when isEmpty() is false.
+    dequeue() => T {
+        let item: T = this._data.get(this._head);
+        this._head = this._head + 1;
+        this._len = this._len - 1;
+        return item;
+    }
+
+    // Peek at front without removing. Only call when isEmpty() is false.
+    front() => T {
+        return this._data.get(this._head);
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._len == 0;
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._len;
+    }
+}

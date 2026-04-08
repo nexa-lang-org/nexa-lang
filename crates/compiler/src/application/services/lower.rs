@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::domain::ast::{
-    BinOp, ClassKind, Declaration, Expr, Program, Stmt, Type, UnOp, Visibility,
+    BinOp, ClassKind, Declaration, Expr, MatchArm, Pattern, Program, Stmt, Type, UnOp, Visibility,
 };
 use crate::domain::ir::*;
 
@@ -14,12 +14,26 @@ use crate::domain::ir::*;
 type TypeEnv = HashMap<String, IrType>;
 
 pub fn lower(program: &Program) -> IrModule {
+    let mut enums = Vec::new();
     let mut classes = Vec::new();
     for decl in &program.declarations {
-        if let Declaration::Class(cls) = decl {
-            classes.push(lower_class(cls));
+        match decl {
+            Declaration::Class(cls) => classes.push(lower_class(cls)),
+            Declaration::Enum(en) => enums.push(IrEnum {
+                name: en.name.clone(),
+                is_public: en.visibility == Visibility::Public,
+                variants: en
+                    .variants
+                    .iter()
+                    .map(|v| IrEnumVariant {
+                        name: v.name.clone(),
+                        field_count: v.fields.len(),
+                    })
+                    .collect(),
+            }),
+            // Interfaces and Test blocks are not emitted at IR level.
+            Declaration::Interface(_) | Declaration::Test(_) => {}
         }
-        // Interfaces are structural types; not emitted as IR definitions for now.
     }
     let routes = program
         .routes
@@ -34,6 +48,7 @@ pub fn lower(program: &Program) -> IrModule {
     IrModule {
         name: program.name.clone(),
         server,
+        enums,
         classes,
         routes,
     }
@@ -191,14 +206,18 @@ fn lower_stmts_in_scope(stmts: &[Stmt], parent_env: &TypeEnv) -> Vec<IrStmt> {
 
 fn lower_stmt(stmt: &Stmt, env: &mut TypeEnv) -> IrStmt {
     match stmt {
-        Stmt::Return(None) => IrStmt::Return(None),
-        Stmt::Return(Some(e)) => IrStmt::Return(Some(lower_expr(e))),
+        Stmt::Return { expr: None, .. } => IrStmt::Return(None),
+        Stmt::Return { expr: Some(e), .. } => IrStmt::Return(Some(lower_expr(e))),
         Stmt::Assign { object, field, value } => {
             let target = match object {
                 Expr::This => IrExpr::Field {
                     receiver: Box::new(IrExpr::SelfRef),
                     name: field.clone(),
                 },
+                // Local variable re-assignment: `x = expr` — the parser encodes this as
+                // Assign { object: Ident("x"), field: "x", value } to reuse the same node.
+                // Emit IrExpr::Local so the JS target is `x`, not `x.x`.
+                Expr::Ident(n) if n == field => IrExpr::Local(n.clone()),
                 other => IrExpr::Field {
                     receiver: Box::new(lower_expr(other)),
                     name: field.clone(),
@@ -246,6 +265,98 @@ fn lower_stmt(stmt: &Stmt, env: &mut TypeEnv) -> IrStmt {
         Stmt::Break => IrStmt::Break,
         Stmt::Continue => IrStmt::Continue,
         Stmt::Expr(e) => IrStmt::Discard(lower_expr(e)),
+        Stmt::Match { expr, arms } => lower_match(expr, arms, env),
+    }
+}
+
+// ── Match statement lowering ──────────────────────────────────────────────────
+
+static MATCH_CTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn lower_match(expr: &Expr, arms: &[MatchArm], env: &mut TypeEnv) -> IrStmt {
+    let id = MATCH_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let subject_var = format!("_nx_m{id}");
+    let subject = lower_expr(expr);
+
+    let ir_arms = arms
+        .iter()
+        .map(|arm| {
+            let (condition, bindings) = lower_pattern(&arm.pattern, &subject_var);
+            let body = lower_stmts_in_scope(&arm.body, env);
+            IrMatchArm { condition, bindings, body }
+        })
+        .collect();
+
+    IrStmt::Match { subject_var, subject, arms: ir_arms }
+}
+
+fn lower_pattern(
+    pat: &Pattern,
+    subject: &str,
+) -> (Option<IrExpr>, Vec<(String, IrExpr)>) {
+    match pat {
+        Pattern::Wildcard => (None, vec![]),
+
+        // A bare name: if it starts with uppercase treat as enum variant tag check,
+        // otherwise treat as a variable binding (always matches, introduces let).
+        Pattern::Name(name) => {
+            let first_char = name.chars().next().unwrap_or('_');
+            if first_char.is_uppercase() {
+                // Enum variant: check _tag field
+                let cond = IrExpr::Bin {
+                    op: IrBinOp::Eq,
+                    lhs: Box::new(IrExpr::Field {
+                        receiver: Box::new(IrExpr::Local(subject.to_string())),
+                        name: "_tag".to_string(),
+                    }),
+                    rhs: Box::new(IrExpr::Str(name.clone())),
+                };
+                (Some(cond), vec![])
+            } else {
+                // Variable binding: always matches, bind name = subject
+                let binding = (name.clone(), IrExpr::Local(subject.to_string()));
+                (None, vec![binding])
+            }
+        }
+
+        Pattern::QualifiedVariant { variant, .. } => {
+            let cond = IrExpr::Bin {
+                op: IrBinOp::Eq,
+                lhs: Box::new(IrExpr::Field {
+                    receiver: Box::new(IrExpr::Local(subject.to_string())),
+                    name: "_tag".to_string(),
+                }),
+                rhs: Box::new(IrExpr::Str(variant.clone())),
+            };
+            (Some(cond), vec![])
+        }
+
+        Pattern::LitBool(b) => {
+            let cond = IrExpr::Bin {
+                op: IrBinOp::Eq,
+                lhs: Box::new(IrExpr::Local(subject.to_string())),
+                rhs: Box::new(IrExpr::Bool(*b)),
+            };
+            (Some(cond), vec![])
+        }
+
+        Pattern::LitInt(n) => {
+            let cond = IrExpr::Bin {
+                op: IrBinOp::Eq,
+                lhs: Box::new(IrExpr::Local(subject.to_string())),
+                rhs: Box::new(IrExpr::Int(*n)),
+            };
+            (Some(cond), vec![])
+        }
+
+        Pattern::LitStr(s) => {
+            let cond = IrExpr::Bin {
+                op: IrBinOp::Eq,
+                lhs: Box::new(IrExpr::Local(subject.to_string())),
+                rhs: Box::new(IrExpr::Str(s.clone())),
+            };
+            (Some(cond), vec![])
+        }
     }
 }
 

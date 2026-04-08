@@ -535,29 +535,96 @@ mod tests {
 
     #[test]
     fn stdlib_io_parses_correctly() {
-        let src = include_str!("../../../stdlib/src/io.nx");
-        let p = parse_lib_source(src);
-        assert!(p.declarations.iter().any(|d| {
-            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Print")
-        }));
+        let cases: &[(&str, &str)] = &[
+            ("Console", include_str!("../../../stdlib/src/io/Console.nx")),
+            ("File",    include_str!("../../../stdlib/src/io/File.nx")),
+        ];
+        for (name, src) in cases {
+            let p = parse_lib_source(src);
+            assert!(
+                p.declarations.iter().any(|d| {
+                    matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == *name)
+                }),
+                "io/{name}.nx must declare class {name}"
+            );
+        }
     }
 
     #[test]
     fn stdlib_math_parses_correctly() {
-        let src = include_str!("../../../stdlib/src/math.nx");
-        let p = parse_lib_source(src);
-        assert!(p.declarations.iter().any(|d| {
-            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Math")
-        }));
+        let cases: &[(&str, &str)] = &[
+            ("Math",   include_str!("../../../stdlib/src/math/Math.nx")),
+            ("Random", include_str!("../../../stdlib/src/math/Random.nx")),
+        ];
+        for (name, src) in cases {
+            let p = parse_lib_source(src);
+            assert!(
+                p.declarations.iter().any(|d| {
+                    matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == *name)
+                }),
+                "math/{name}.nx must declare class {name}"
+            );
+        }
     }
 
     #[test]
     fn stdlib_str_parses_correctly() {
-        let src = include_str!("../../../stdlib/src/str.nx");
+        let cases: &[(&str, &str)] = &[
+            ("Str",           include_str!("../../../stdlib/src/str/Str.nx")),
+            ("StringBuilder", include_str!("../../../stdlib/src/str/StringBuilder.nx")),
+        ];
+        for (name, src) in cases {
+            let p = parse_lib_source(src);
+            assert!(
+                p.declarations.iter().any(|d| {
+                    matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == *name)
+                }),
+                "str/{name}.nx must declare class {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn stdlib_net_parses_correctly() {
+        let cases: &[(&str, &str)] = &[
+            ("HttpClient", include_str!("../../../stdlib/src/net/HttpClient.nx")),
+            ("Socket",     include_str!("../../../stdlib/src/net/Socket.nx")),
+        ];
+        for (name, src) in cases {
+            let p = parse_lib_source(src);
+            assert!(
+                p.declarations.iter().any(|d| {
+                    matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == *name)
+                }),
+                "net/{name}.nx must declare class {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn stdlib_server_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/server/HttpServer.nx");
         let p = parse_lib_source(src);
         assert!(p.declarations.iter().any(|d| {
-            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Str")
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "HttpServer")
         }));
+    }
+
+    #[test]
+    fn stdlib_process_parses_correctly() {
+        let cases: &[(&str, &str)] = &[
+            ("Process", include_str!("../../../stdlib/src/process/Process.nx")),
+            ("Env",     include_str!("../../../stdlib/src/process/Env.nx")),
+        ];
+        for (name, src) in cases {
+            let p = parse_lib_source(src);
+            assert!(
+                p.declarations.iter().any(|d| {
+                    matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == *name)
+                }),
+                "process/{name}.nx must declare class {name}"
+            );
+        }
     }
 
     #[test]
@@ -576,5 +643,226 @@ mod tests {
         assert!(p.declarations.iter().any(|d| {
             matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Result")
         }));
+    }
+
+    #[test]
+    fn stdlib_collections_parses_correctly() {
+        // 1 class = 1 file — each file must declare exactly the named class.
+        let cases: &[(&str, &str)] = &[
+            ("Stack",                include_str!("../../../stdlib/src/collections/Stack.nx")),
+            ("Queue",                include_str!("../../../stdlib/src/collections/Queue.nx")),
+            ("ArrayList",            include_str!("../../../stdlib/src/collections/ArrayList.nx")),
+            ("LinkedList",           include_str!("../../../stdlib/src/collections/LinkedList.nx")),
+            ("HashMap",              include_str!("../../../stdlib/src/collections/HashMap.nx")),
+            ("HashSet",              include_str!("../../../stdlib/src/collections/HashSet.nx")),
+            ("Deque",                include_str!("../../../stdlib/src/collections/Deque.nx")),
+            ("PriorityQueue",        include_str!("../../../stdlib/src/collections/PriorityQueue.nx")),
+            ("SynchronizedStack",    include_str!("../../../stdlib/src/collections/SynchronizedStack.nx")),
+            ("SynchronizedQueue",    include_str!("../../../stdlib/src/collections/SynchronizedQueue.nx")),
+            ("SynchronizedArrayList",include_str!("../../../stdlib/src/collections/SynchronizedArrayList.nx")),
+            ("SynchronizedHashMap",  include_str!("../../../stdlib/src/collections/SynchronizedHashMap.nx")),
+            ("SynchronizedHashSet",  include_str!("../../../stdlib/src/collections/SynchronizedHashSet.nx")),
+            ("SynchronizedDeque",    include_str!("../../../stdlib/src/collections/SynchronizedDeque.nx")),
+        ];
+        for (name, src) in cases {
+            let p = parse_lib_source(src);
+            assert!(
+                p.declarations.iter().any(|d| {
+                    matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == *name)
+                }),
+                "collections/{name}.nx must declare class {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn stdlib_future_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/async/Future.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "Future")
+        }));
+    }
+
+    #[test]
+    fn stdlib_completable_future_parses_correctly() {
+        let src = include_str!("../../../stdlib/src/async/CompletableFuture.nx");
+        let p = parse_lib_source(src);
+        assert!(p.declarations.iter().any(|d| {
+            matches!(d, crate::domain::ast::Declaration::Class(c) if c.name == "CompletableFuture")
+        }));
+    }
+
+    // ── ADT / enum tests ──────────────────────────────────────────────────────
+
+    fn parse_enum_src(src: &str) -> crate::domain::ast::Program {
+        use crate::application::services::{lexer::Lexer, parser::Parser};
+        let tokens = Lexer::new(src).tokenize().expect("lex error");
+        Parser::new(tokens).parse_lib().expect("parse error")
+    }
+
+    #[test]
+    fn enum_unit_variants_parse_correctly() {
+        let src = "package test; enum Color { Red, Green, Blue }";
+        let p = parse_enum_src(src);
+        let decl = p.declarations.first().unwrap();
+        if let crate::domain::ast::Declaration::Enum(e) = decl {
+            assert_eq!(e.name, "Color");
+            assert_eq!(e.variants.len(), 3);
+            assert_eq!(e.variants[0].name, "Red");
+            assert!(e.variants[0].fields.is_empty());
+        } else {
+            panic!("expected Enum declaration");
+        }
+    }
+
+    #[test]
+    fn enum_tuple_variants_parse_correctly() {
+        let src = "package test; enum Shape { Circle(Int), Rectangle(Int, Int), Point }";
+        let p = parse_enum_src(src);
+        if let crate::domain::ast::Declaration::Enum(e) = &p.declarations[0] {
+            assert_eq!(e.variants[0].fields.len(), 1); // Circle(Int)
+            assert_eq!(e.variants[1].fields.len(), 2); // Rectangle(Int, Int)
+            assert_eq!(e.variants[2].fields.len(), 0); // Point
+        } else {
+            panic!("expected Enum declaration");
+        }
+    }
+
+    #[test]
+    fn enum_lowers_to_ir_correctly() {
+        use crate::application::services::lower;
+        let src = "package test; enum Color { Red, Green, Blue }";
+        let p = parse_enum_src(src);
+        let ir = lower::lower(&p);
+        assert_eq!(ir.enums.len(), 1);
+        assert_eq!(ir.enums[0].name, "Color");
+        assert_eq!(ir.enums[0].variants.len(), 3);
+    }
+
+    #[test]
+    fn enum_codegen_emits_js_class() {
+        use crate::application::services::{codegen::CodeGenerator, lower};
+        let src = r#"app App {
+  enum Direction { North, South, East, West }
+  public window Home {
+    public render() => Component { return Page { Text("hi") }; }
+  }
+  route "/" => Home;
+}"#;
+        let tokens = crate::application::services::lexer::Lexer::new(src)
+            .tokenize()
+            .unwrap();
+        let program = crate::application::services::parser::Parser::new(tokens)
+            .parse()
+            .unwrap();
+        let _ir = lower::lower(&program);
+        let js = CodeGenerator::new().generate(&program).unwrap().js;
+        assert!(js.contains("class Direction"), "should emit JS class for enum");
+        assert!(js.contains("static North()"), "should emit static factory for North");
+        assert!(js.contains("static South()"), "should emit static factory for South");
+    }
+
+    // ── Pattern matching tests ────────────────────────────────────────────────
+
+    #[test]
+    fn match_stmt_parses_with_wildcard() {
+        let src = r#"package test;
+public class Foo {
+    check(x: Int) => Int {
+        match (x) {
+            42 => { return 1; }
+            _ => { return 0; }
+        }
+        return 0;
+    }
+}"#;
+        let p = parse_lib_source(src);
+        assert_eq!(p.declarations.len(), 1);
+    }
+
+    #[test]
+    fn match_stmt_parses_enum_pattern() {
+        let src = r#"package test;
+public class Handler {
+    handle(c: Int) => Int {
+        match (c) {
+            Red => { return 1; }
+            Green => { return 2; }
+            _ => { return 0; }
+        }
+        return 0;
+    }
+}"#;
+        let p = parse_lib_source(src);
+        assert_eq!(p.declarations.len(), 1);
+    }
+
+    #[test]
+    fn match_stmt_lowers_to_ir_match() {
+        use crate::application::services::lower;
+        use crate::domain::ir::IrStmt;
+        let src = r#"package test;
+public class Foo {
+    check(x: Int) => Int {
+        match (x) {
+            1 => { return 1; }
+            _ => { return 0; }
+        }
+        return 0;
+    }
+}"#;
+        let p = parse_lib_source(src);
+        let ir = lower::lower(&p);
+        let method = &ir.classes[0].methods[0];
+        assert!(
+            method.body.iter().any(|s| matches!(s, IrStmt::Match { .. })),
+            "match stmt should lower to IrStmt::Match"
+        );
+    }
+
+    // ── Test block tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_blocks_parse_correctly() {
+        use crate::application::services::{lexer::Lexer, parser::Parser};
+        let src = r#"package mytest;
+test "addition works" {
+    let x: Int = 1 + 1;
+    let y: Int = 2;
+}
+test "subtraction works" {
+    let a: Int = 5 - 3;
+}
+"#;
+        let tokens = Lexer::new(src).tokenize().expect("lex error");
+        let p = Parser::new(tokens).parse_lib().expect("parse error");
+        assert_eq!(
+            p.declarations
+                .iter()
+                .filter(|d| matches!(d, crate::domain::ast::Declaration::Test(_)))
+                .count(),
+            2,
+            "should find 2 test blocks"
+        );
+    }
+
+    // ── Error recovery tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn parser_collects_zero_errors_for_valid_code() {
+        use crate::application::services::{lexer::Lexer, parser::Parser};
+        let src = r#"package test;
+public class Foo {
+    bar() => Int {
+        let x: Int = 1 + 1;
+        return x;
+    }
+}"#;
+        let tokens = Lexer::new(src).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let p = parser.parse_lib().unwrap();
+        assert!(parser.collected_errors().is_empty(), "valid code should produce no collected errors");
+        assert_eq!(p.declarations.len(), 1);
     }
 }

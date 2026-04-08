@@ -1,0 +1,71 @@
+// std.result — Result type for error handling
+// Result<T> holds either a success value of type T or an error message String.
+// The type parameter T is erased at compile time (JS is dynamically typed),
+// so Result works correctly for any success value type at runtime.
+//
+// Usage:
+//   import std.result.Result;
+//   let r = Result(42, true, "");         // Ok(42)
+//   let e = Result(0,  false, "not found"); // Err("not found")
+//   if (r.isOk()) { let v = r.get(); }
+
+package std.result;
+
+public class Result<T> {
+    private Bool ok;
+    private T value;
+    private String error;
+
+    constructor(val: T, success: Bool, err: String) {
+        this.value = val;
+        this.ok = success;
+        this.error = err;
+    }
+
+    // True when this is a success value.
+    isOk() => Bool {
+        return this.ok;
+    }
+
+    // True when this is an error.
+    isErr() => Bool {
+        return this.ok == false;
+    }
+
+    // Return the success value.
+    // Only call when isOk() is true.
+    get() => T {
+        return this.value;
+    }
+
+    // Return the success value or fallback on error.
+    unwrapOr(fallback: T) => T {
+        if (this.ok) {
+            return this.value;
+        }
+        return fallback;
+    }
+
+    // Return the error message (empty string on success).
+    errorMessage() => String {
+        return this.error;
+    }
+
+    // Apply a transformation to the success value and return a new Result.
+    // If this is Err, the error propagates unchanged.
+    // fn is a function (T) => T applied to the inner value.
+    map(fn: (T) => T) => Result {
+        if (this.ok) {
+            return Result(fn(this.value), true, "");
+        }
+        return Result(this.value, false, this.error);
+    }
+
+    // True when isOk() and the success value equals other.
+    contains(other: T) => Bool {
+        if (this.ok) {
+            return this.value == other;
+        }
+        return false;
+    }
+}

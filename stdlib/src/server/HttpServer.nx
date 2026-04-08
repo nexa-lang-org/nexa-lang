@@ -1,0 +1,61 @@
+package std.server;
+
+// HttpServer — Minimal HTTP server for Node.js.
+// The request handler receives (method, path, body) as Strings and
+// must return the response body as a String.
+//
+// Usage:
+//   import std.server.HttpServer;
+//   let server = HttpServer(3000);
+//   server.onRequest((method, path, body) => {
+//     return "Hello from " + path;
+//   });
+//   await server.start();
+//   // ... later:
+//   server.stop();
+
+public class HttpServer {
+    private Int _port;
+    private Bool _running;
+    private (String, String, String) => String _handler;
+    private Bool _hasHandler;
+
+    constructor(port: Int) {
+        this._port = port;
+        this._running = false;
+        this._hasHandler = false;
+    }
+
+    // Set the request handler: fn(method, path, body) => responseBody.
+    // Returns this for chaining.
+    onRequest(fn: (String, String, String) => String) => HttpServer {
+        this._handler = fn;
+        this._hasHandler = true;
+        return this;
+    }
+
+    // Start the server and begin accepting connections.
+    // Must be awaited inside an async method.
+    async start() => Void {
+        if (this._hasHandler) {
+            await _serverStart(this._port, this._handler);
+        } else {
+            await _serverStartDefault(this._port);
+        }
+        this._running = true;
+        return;
+    }
+
+    // Stop the server. Safe to call even if not running.
+    stop() => Void {
+        _serverStop();
+        this._running = false;
+        return;
+    }
+
+    // True when the server is listening.
+    isRunning() => Bool { return this._running; }
+
+    // The port number this server listens on.
+    port() => Int { return this._port; }
+}

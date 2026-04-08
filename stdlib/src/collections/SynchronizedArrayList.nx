@@ -1,0 +1,120 @@
+package std.collections;
+
+// SynchronizedArrayList<T> — Lock-guarded resizable array.
+//
+// Usage:
+//   import std.collections.SynchronizedArrayList;
+//   let list = SynchronizedArrayList();
+//   if (list.lock()) {
+//     list.add(x);
+//     list.unlock();
+//   }
+
+public class SynchronizedArrayList<T> {
+    private List<T> _data;
+    private Int _size;
+    private Bool _locked;
+
+    constructor() {
+        this._data = [];
+        this._size = 0;
+        this._locked = false;
+    }
+
+    // Acquire the lock. Returns true if free, false if already locked.
+    lock() => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._locked = true;
+        return true;
+    }
+
+    // Release the lock.
+    unlock() => Void {
+        this._locked = false;
+        return;
+    }
+
+    // True if the lock is currently held.
+    isLocked() => Bool {
+        return this._locked;
+    }
+
+    // Add item. Returns false (no-op) if locked.
+    tryAdd(item: T) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._data.push(item);
+        this._size = this._size + 1;
+        return true;
+    }
+
+    // Unconditional add — use only when you hold the lock.
+    add(item: T) => Void {
+        this._data.push(item);
+        this._size = this._size + 1;
+        return;
+    }
+
+    // Return item at index. O(1).
+    get(index: Int) => T {
+        return this._data.get(index);
+    }
+
+    // Replace item at index. Returns false if locked.
+    trySet(index: Int, item: T) => Bool {
+        if (this._locked) {
+            return false;
+        }
+        this._data.set(index, item);
+        return true;
+    }
+
+    // Unconditional set — use only when you hold the lock.
+    set(index: Int, item: T) => Void {
+        this._data.set(index, item);
+        return;
+    }
+
+    // Remove and return the last item. O(1).
+    removeLast() => T {
+        this._size = this._size - 1;
+        return this._data.pop();
+    }
+
+    // Remove item at index, shifting subsequent items. O(n).
+    removeAt(index: Int) => Void {
+        this._data.removeAt(index);
+        this._size = this._size - 1;
+        return;
+    }
+
+    // True if list contains item.
+    contains(item: T) => Bool {
+        return this._data.contains(item);
+    }
+
+    // Index of first occurrence, or -1.
+    indexOf(item: T) => Int {
+        return this._data.indexOf(item);
+    }
+
+    // Remove all items.
+    clear() => Void {
+        this._data = [];
+        this._size = 0;
+        return;
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

@@ -1,0 +1,76 @@
+package std.async;
+
+// Future<T> — a read-only handle to a completed async result.
+//
+// A Future is either resolved (holds a value) or rejected (holds an error
+// message).  It is immutable once created — use CompletableFuture when you
+// need to set the result after the fact.
+//
+// Usage:
+//   import std.async.Future;
+//
+//   // Already-resolved future:
+//   let f = Future(42, true, "");
+//   if (f.isResolved()) {
+//     let v = f.get();  // => 42
+//   }
+//
+//   // Already-rejected future:
+//   let e = Future(0, false, "timeout");
+//   if (e.isRejected()) {
+//     let msg = e.getError();  // => "timeout"
+//   }
+
+public class Future<T> {
+    private T _value;
+    private Bool _resolved;
+    private String _error;
+
+    // Constructor:
+    //   val      — the resolved value (only meaningful when resolved is true)
+    //   resolved — true = resolved with val, false = rejected with err
+    //   err      — error message (only meaningful when resolved is false)
+    constructor(val: T, resolved: Bool, err: String) {
+        this._value = val;
+        this._resolved = resolved;
+        this._error = err;
+    }
+
+    // True when this future holds a value.
+    isResolved() => Bool {
+        return this._resolved;
+    }
+
+    // True when this future holds an error.
+    isRejected() => Bool {
+        return this._resolved == false;
+    }
+
+    // Return the resolved value.
+    // Only call when isResolved() is true.
+    get() => T {
+        return this._value;
+    }
+
+    // Return the error message.
+    // Only call when isRejected() is true.
+    getError() => String {
+        return this._error;
+    }
+
+    // Return the resolved value, or fallback if rejected.
+    unwrapOr(fallback: T) => T {
+        if (this._resolved) {
+            return this._value;
+        }
+        return fallback;
+    }
+
+    // True when resolved and the value equals other.
+    contains(other: T) => Bool {
+        if (this._resolved) {
+            return this._value == other;
+        }
+        return false;
+    }
+}

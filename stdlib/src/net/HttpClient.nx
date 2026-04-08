@@ -1,0 +1,93 @@
+package std.net;
+
+// HttpClient — Async HTTP client backed by the fetch API.
+// Works in browsers and in Node.js 18+ (which includes fetch globally).
+//
+// After each request the result is accessible via lastStatus(), lastBody(),
+// and lastOk() — this avoids the need to instantiate a response object.
+//
+// Usage:
+//   import std.net.HttpClient;
+//   let client = HttpClient();
+//   let body = await client.get("https://api.example.com/users");
+//   if (client.lastOk()) {
+//     let data = body;
+//   }
+
+public class HttpClient {
+    private Int _lastStatus;
+    private String _lastBody;
+    private Bool _lastOk;
+    private String _baseUrl;
+
+    constructor() {
+        this._lastStatus = 0;
+        this._lastBody = "";
+        this._lastOk = false;
+        this._baseUrl = "";
+    }
+
+    // Set a base URL prepended to all relative paths.
+    setBaseUrl(url: String) => HttpClient {
+        this._baseUrl = url;
+        return this;
+    }
+
+    // ── Request methods ────────────────────────────────────────────────────────
+
+    // HTTP GET — returns the response body as a String.
+    async get(url: String) => String {
+        let body: String = await _httpGet(this._baseUrl + url);
+        this._lastStatus = _httpStatus();
+        this._lastBody = body;
+        this._lastOk = _httpOk();
+        return body;
+    }
+
+    // HTTP POST — sends body as a String, returns response body.
+    async post(url: String, body: String) => String {
+        let res: String = await _httpPost(this._baseUrl + url, body);
+        this._lastStatus = _httpStatus();
+        this._lastBody = res;
+        this._lastOk = _httpOk();
+        return res;
+    }
+
+    // HTTP PUT — sends body as a String, returns response body.
+    async put(url: String, body: String) => String {
+        let res: String = await _httpPut(this._baseUrl + url, body);
+        this._lastStatus = _httpStatus();
+        this._lastBody = res;
+        this._lastOk = _httpOk();
+        return res;
+    }
+
+    // HTTP DELETE — returns response body.
+    async delete(url: String) => String {
+        let res: String = await _httpDelete(this._baseUrl + url);
+        this._lastStatus = _httpStatus();
+        this._lastBody = res;
+        this._lastOk = _httpOk();
+        return res;
+    }
+
+    // HTTP PATCH — sends body as a String, returns response body.
+    async patch(url: String, body: String) => String {
+        let res: String = await _httpPatch(this._baseUrl + url, body);
+        this._lastStatus = _httpStatus();
+        this._lastBody = res;
+        this._lastOk = _httpOk();
+        return res;
+    }
+
+    // ── Last response accessors ───────────────────────────────────────────────
+
+    // HTTP status code of the last request (0 if no request made or network error).
+    lastStatus() => Int { return this._lastStatus; }
+
+    // Response body of the last request.
+    lastBody() => String { return this._lastBody; }
+
+    // True when the last response had a 2xx status code.
+    lastOk() => Bool { return this._lastOk; }
+}

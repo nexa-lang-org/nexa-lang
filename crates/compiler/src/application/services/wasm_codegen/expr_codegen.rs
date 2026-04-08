@@ -178,6 +178,9 @@ impl WatGen {
                 let idx = self.loop_idx.saturating_sub(1);
                 self.ln(&format!("br $lp_{}", idx));
             }
+            // Match statements are a JS-backend feature; the WASM backend
+            // does not yet support them. Skip with a no-op.
+            IrStmt::Match { .. } => {}
         }
         Ok(())
     }

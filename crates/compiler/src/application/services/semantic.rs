@@ -179,7 +179,7 @@ fn free_vars_env(env: &HmEnv, subst: &HashMap<u32, HmType>) -> HashSet<u32> {
 /// ──────────────────────────────────────────
 ///          Γ ⊢ let x = e : ∀α₁…αₙ. τ
 /// ```
-fn generalize(env: &HmEnv, ty: &HmType, u: &Unifier) -> TypeScheme {
+fn generalize(env: &HmEnv, ty: &HmType, u: &mut Unifier) -> TypeScheme {
     let resolved = u.apply(ty);
     let ty_free = free_vars(&resolved, &u.subst);
     let env_free = free_vars_env(env, &u.subst);
@@ -243,17 +243,35 @@ impl Unifier {
     }
 
     /// Apply the current substitution to `ty` (follows chains to normal form).
-    fn apply(&self, ty: &HmType) -> HmType {
+    ///
+    /// Uses **path compression**: after resolving a chain `α1 → α2 → τ`,
+    /// `α1` is updated to point directly to `τ`, reducing future traversal
+    /// from O(n) to O(1) amortised — the same guarantee as union-find.
+    fn apply(&mut self, ty: &HmType) -> HmType {
         match ty {
-            HmType::Var(id) => match self.subst.get(id) {
-                Some(bound) => self.apply(bound),
-                None => ty.clone(),
-            },
+            HmType::Var(id) => {
+                let id = *id;
+                // Clone the bound type out of `subst` so we can call `apply`
+                // recursively without holding a borrow into `self.subst`.
+                match self.subst.get(&id).cloned() {
+                    Some(bound) => {
+                        let resolved = self.apply(&bound);
+                        // Path compress: point `id` directly at the terminal type,
+                        // skipping the intermediate chain on the next lookup.
+                        self.subst.insert(id, resolved.clone());
+                        resolved
+                    }
+                    None => ty.clone(),
+                }
+            }
             HmType::List(inner) => HmType::List(Box::new(self.apply(inner))),
-            HmType::Function(params, ret) => HmType::Function(
-                params.iter().map(|p| self.apply(p)).collect(),
-                Box::new(self.apply(ret)),
-            ),
+            HmType::Function(params, ret) => {
+                // Collect params into an owned Vec first so we release the
+                // borrow on `params` before the mutable `self.apply(ret)` call.
+                let params_applied: Vec<HmType> = params.iter().map(|p| self.apply(p)).collect();
+                let ret_applied = self.apply(ret);
+                HmType::Function(params_applied, Box::new(ret_applied))
+            }
             other => other.clone(),
         }
     }
@@ -372,6 +390,8 @@ impl SemanticAnalyzer {
                     }
                     self.interfaces.insert(iface.name.clone(), iface.clone());
                 }
+                // Enums and test blocks do not require name-collection in Pass 1.
+                Declaration::Enum(_) | Declaration::Test(_) => {}
             }
         }
 
@@ -442,6 +462,7 @@ impl SemanticAnalyzer {
             match decl {
                 Declaration::Class(cls) => self.check_class_generics(cls)?,
                 Declaration::Interface(iface) => self.check_interface_generics(iface)?,
+                Declaration::Enum(_) | Declaration::Test(_) => {}
             }
         }
 
@@ -622,19 +643,23 @@ impl SemanticAnalyzer {
                     env.insert(name.clone(), t);
                 }
             }
-            Stmt::Return(Some(expr)) if return_type != &Type::Void => {
+            Stmt::Return { expr: Some(expr), span } if return_type != &Type::Void => {
                 if let Some(found) = self.infer_expr_type(expr, cls, env) {
                     if &found != return_type {
                         return Err(SemanticError::TypeMismatch {
                             expected: format!("{return_type:?}"),
                             found: format!("{found:?}"),
-                            span: Span::dummy(),
+                            span: *span,
                         });
                     }
                 }
             }
             Stmt::If { then_body, else_body, .. } => {
-                // Each branch gets its own child scope (inherits parent).
+                // Each branch gets its own child scope (clone of parent env).
+                // Intentional O(bindings) clone per branch: scopes are small
+                // (5-20 entries) and this only runs once per if-stmt per method.
+                // Use Cow<HashMap> or an arena if profiling shows this as a
+                // bottleneck on very large programs.
                 let mut then_env = env.clone();
                 for s in then_body {
                     self.check_stmt_types(s, return_type, cls, &mut then_env)?;
@@ -647,12 +672,14 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::While { body, .. } => {
+                // Intentional clone — same rationale as Stmt::If above.
                 let mut inner_env = env.clone();
                 for s in body {
                     self.check_stmt_types(s, return_type, cls, &mut inner_env)?;
                 }
             }
             Stmt::For { var, body, .. } => {
+                // Intentional clone — same rationale as Stmt::If above.
                 let mut inner_env = env.clone();
                 // Element type unknown without knowing the iterator's item type.
                 inner_env.insert(var.clone(), Type::Generic("T".into()));
@@ -937,7 +964,7 @@ impl SemanticAnalyzer {
                 env.insert(name.clone(), scheme);
             }
             // RETURN: check concrete types; skip if either side is still a Var.
-            Stmt::Return(Some(expr)) if *return_ty != HmType::Void => {
+            Stmt::Return { expr: Some(expr), span } if *return_ty != HmType::Void => {
                 let found = self.infer_expr_hm(expr, env, cls, u)?;
                 let found_r = u.apply(&found);
                 let ret_r = u.apply(return_ty);
@@ -945,11 +972,12 @@ impl SemanticAnalyzer {
                     u.unify(&found_r, &ret_r).map_err(|_| SemanticError::TypeMismatch {
                         expected: ret_r.display(),
                         found: found_r.display(),
-                        span: Span::dummy(),
+                        span: *span,
                     })?;
                 }
             }
             Stmt::If { then_body, else_body, .. } => {
+                // Intentional clone — same rationale as check_stmt_types above.
                 let mut then_env = env.clone();
                 for s in then_body {
                     self.check_stmt_hm(s, return_ty, cls, &mut then_env, u)?;
@@ -962,12 +990,14 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::While { body, .. } => {
+                // Intentional clone — same rationale as check_stmt_types above.
                 let mut inner = env.clone();
                 for s in body {
                     self.check_stmt_hm(s, return_ty, cls, &mut inner, u)?;
                 }
             }
             Stmt::For { var, body, .. } => {
+                // Intentional clone — same rationale as check_stmt_types above.
                 let mut inner = env.clone();
                 // The loop variable gets a fresh var (element type unknown until stdlib).
                 inner.insert(var.clone(), TypeScheme::mono(HmType::Var(u.fresh())));
@@ -1220,7 +1250,7 @@ mod tests {
             name: "get".into(),
             params: vec![],
             return_type: Type::Int,
-            body: vec![Stmt::Return(Some(Expr::StringLit("oops".into())))],
+            body: vec![Stmt::Return { expr: Some(Expr::StringLit("oops".into())), span: Span::dummy() }],
         };
         let cls = ClassDecl {
             methods: vec![method],
@@ -1243,7 +1273,7 @@ mod tests {
             name: "get".into(),
             params: vec![],
             return_type: Type::Int,
-            body: vec![Stmt::Return(Some(Expr::IntLit(7)))],
+            body: vec![Stmt::Return { expr: Some(Expr::IntLit(7)), span: Span::dummy() }],
         };
         let cls = ClassDecl {
             methods: vec![method],
@@ -1347,10 +1377,10 @@ mod tests {
                 name: "get".into(),
                 params: vec![],
                 return_type: Type::Int,
-                body: vec![Stmt::Return(Some(Expr::FieldAccess(
+                body: vec![Stmt::Return { expr: Some(Expr::FieldAccess(
                     Box::new(Expr::This),
                     "count".into(),
-                )))],
+                )), span: Span::dummy() }],
             }],
             ..make_class("App", ClassKind::Class, Visibility::Public)
         };
@@ -1373,10 +1403,10 @@ mod tests {
                 name: "get".into(),
                 params: vec![],
                 return_type: Type::String,
-                body: vec![Stmt::Return(Some(Expr::FieldAccess(
+                body: vec![Stmt::Return { expr: Some(Expr::FieldAccess(
                     Box::new(Expr::This),
                     "count".into(),
-                )))],
+                )), span: Span::dummy() }],
             }],
             ..make_class("App", ClassKind::Class, Visibility::Public)
         };
@@ -1399,7 +1429,7 @@ mod tests {
                     name: "get".into(),
                     params: vec![],
                     return_type: Type::Int,
-                    body: vec![Stmt::Return(Some(Expr::IntLit(0)))],
+                    body: vec![Stmt::Return { expr: Some(Expr::IntLit(0)), span: Span::dummy() }],
                 },
                 Method {
                     visibility: Visibility::Public,
@@ -1407,11 +1437,11 @@ mod tests {
                     name: "run".into(),
                     params: vec![],
                     return_type: Type::Int,
-                    body: vec![Stmt::Return(Some(Expr::MethodCall {
+                    body: vec![Stmt::Return { expr: Some(Expr::MethodCall {
                         receiver: Box::new(Expr::This),
                         method: "get".into(),
                         args: vec![],
-                    }))],
+                    }), span: Span::dummy() }],
                 },
             ],
             ..make_class("Counter", ClassKind::Class, Visibility::Public)
@@ -1561,7 +1591,7 @@ mod tests {
                 name: "get".into(),
                 params: vec![],
                 return_type: Type::Int,
-                body: vec![Stmt::Return(Some(Expr::IntLit(0)))],
+                body: vec![Stmt::Return { expr: Some(Expr::IntLit(0)), span: Span::dummy() }],
             }],
             ..make_class("Counter", ClassKind::Class, Visibility::Public)
         };
@@ -1861,7 +1891,7 @@ mod tests {
 
         // Insert let wrap = x => x into env (simulating check_stmt_hm LET rule).
         let lambda_ty = analyzer.infer_expr_hm(&wrap_lambda, &env, &cls, &mut u).unwrap();
-        let scheme = generalize(&env, &lambda_ty, &u);
+        let scheme = generalize(&env, &lambda_ty, &mut u);
         assert!(!scheme.quantified.is_empty(), "wrap should be polymorphic");
         env.insert("wrap".into(), scheme);
 

@@ -1,3 +1,4 @@
+use crate::domain::span::Span;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -106,10 +107,40 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
+// ── Enum / ADT ───────────────────────────────────────────────────────────────
+
+/// A single variant of an enum, e.g. `Circle(Int)` or `Point`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumVariant {
+    pub name: String,
+    /// Field types for tuple-style variants; empty for unit variants.
+    pub fields: Vec<Type>,
+}
+
+/// An algebraic data type (ADT) declaration.
+/// Syntax: `enum Color { Red, Green, Blue }` or `enum Shape { Circle(Int), Point }`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumDecl {
+    pub visibility: Visibility,
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+// ── Test block ───────────────────────────────────────────────────────────────
+
+/// A named test block: `test "description" { stmts }`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestDecl {
+    pub name: String,
+    pub body: Vec<Stmt>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Declaration {
     Class(ClassDecl),
     Interface(InterfaceDecl),
+    Enum(EnumDecl),
+    Test(TestDecl),
 }
 
 // ── Class / Component / Window ──────────────────────────────────────────────
@@ -178,11 +209,43 @@ pub struct Route {
     pub target: String,
 }
 
+// ── Patterns (for match expressions) ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Pattern {
+    /// `_` — matches anything, binds nothing.
+    Wildcard,
+    /// A bare name that may be an enum variant OR a binding.
+    /// The compiler resolves which at lower-time; for now both work.
+    Name(String),
+    /// `EnumName.Variant` — qualified enum variant pattern.
+    QualifiedVariant { enum_name: String, variant: String },
+    /// Literal `true` or `false`.
+    LitBool(bool),
+    /// Integer literal.
+    LitInt(i64),
+    /// String literal.
+    LitStr(String),
+}
+
+/// One arm of a `match` statement: `pattern => { body }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Vec<Stmt>,
+}
+
 // ── Statements ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
-    Return(Option<Expr>),
+    Return {
+        expr: Option<Expr>,
+        /// Source location of the `return` keyword.
+        /// Set to `Span::dummy()` when constructed synthetically (tests, NXB round-trips).
+        #[serde(skip)]
+        span: Span,
+    },
     /// this.field = value  OR  ident = value
     Assign {
         object: Expr,
@@ -213,6 +276,11 @@ pub enum Stmt {
     Break,
     Continue,
     Expr(Expr),
+    /// `match (expr) { pattern => { body } ... }`
+    Match {
+        expr: Expr,
+        arms: Vec<MatchArm>,
+    },
 }
 
 // ── Expressions ──────────────────────────────────────────────────────────────

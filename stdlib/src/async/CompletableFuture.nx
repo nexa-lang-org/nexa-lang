@@ -1,0 +1,136 @@
+package std.async;
+
+// CompletableFuture<T> — a future whose result can be set after creation,
+// with thenApply / exceptionally callback chaining.
+//
+// Lifecycle:
+//   pending → complete(val)  →  resolved  (thenApply callback applied to val)
+//   pending → fail(err)      →  rejected  (exceptionally callback recovers if present)
+//
+// Chaining (fluent API — all chain methods return this):
+//   cf.thenApply((x) => x * 2)
+//     .exceptionally((err) => 0);
+//   cf.complete(21);
+//   cf.get();       // => 42
+//   cf.isResolved() // => true
+//
+// Error recovery:
+//   cf.exceptionally((err) => -1);
+//   cf.fail("timeout");
+//   cf.isResolved();  // => true  (recovered by exceptionally)
+//   cf.get();         // => -1
+//
+// Notes:
+//   - Only one thenApply and one exceptionally handler can be registered;
+//     re-registering overwrites the previous handler.
+//   - complete() and fail() are no-ops after the first call (first write wins).
+//   - JS is single-threaded so there are no concurrency issues.
+
+public class CompletableFuture<T> {
+    private Bool _pending;
+    private Bool _resolved;
+    private T _value;
+    private String _error;
+    private (T) => T _thenFn;
+    private (String) => T _exceptFn;
+    private Bool _hasThen;
+    private Bool _hasExcept;
+
+    constructor() {
+        this._pending = true;
+        this._resolved = false;
+        this._error = "";
+        this._hasThen = false;
+        this._hasExcept = false;
+    }
+
+    // Register a success transformer.
+    // fn is called with the value passed to complete() and its return value
+    // becomes the resolved value accessible via get().
+    // Returns this for fluent chaining.
+    thenApply(fn: (T) => T) => CompletableFuture {
+        this._thenFn = fn;
+        this._hasThen = true;
+        return this;
+    }
+
+    // Register an error recovery handler.
+    // fn is called with the error string passed to fail() and its return value
+    // becomes the resolved value (the future transitions to resolved, not rejected).
+    // Returns this for fluent chaining.
+    exceptionally(fn: (String) => T) => CompletableFuture {
+        this._exceptFn = fn;
+        this._hasExcept = true;
+        return this;
+    }
+
+    // Resolve with a value. No-op if already settled (first write wins).
+    // If a thenApply handler is registered, it transforms the value.
+    complete(val: T) => Void {
+        if (this._pending) {
+            this._pending = false;
+            this._resolved = true;
+            if (this._hasThen) {
+                this._value = this._thenFn(val);
+            } else {
+                this._value = val;
+            }
+        }
+        return;
+    }
+
+    // Reject with an error message. No-op if already settled.
+    // If an exceptionally handler is registered, it recovers the value and
+    // the future transitions to resolved instead of rejected.
+    fail(err: String) => Void {
+        if (this._pending) {
+            this._pending = false;
+            this._error = err;
+            if (this._hasExcept) {
+                this._value = this._exceptFn(err);
+                this._resolved = true;
+            } else {
+                this._resolved = false;
+            }
+        }
+        return;
+    }
+
+    // True while neither complete() nor fail() has been called.
+    isPending() => Bool {
+        return this._pending;
+    }
+
+    // True after complete() was called (or fail() recovered via exceptionally).
+    isResolved() => Bool {
+        return this._resolved;
+    }
+
+    // True after fail() was called without an exceptionally handler.
+    isRejected() => Bool {
+        if (this._pending) {
+            return false;
+        }
+        return this._resolved == false;
+    }
+
+    // Return the resolved value.
+    // Only call when isResolved() is true.
+    get() => T {
+        return this._value;
+    }
+
+    // Return the error message.
+    // Only call when isRejected() is true.
+    getError() => String {
+        return this._error;
+    }
+
+    // Return the resolved value, or fallback if not resolved.
+    unwrapOr(fallback: T) => T {
+        if (this._resolved) {
+            return this._value;
+        }
+        return fallback;
+    }
+}

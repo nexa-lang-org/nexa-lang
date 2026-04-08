@@ -1,0 +1,102 @@
+package std.net;
+
+// Socket — WebSocket client wrapper.
+// Works in browsers natively and in Node.js with the `ws` package.
+// The underlying WebSocket instance is tracked by an integer ID managed
+// by the _socket* runtime helpers.
+//
+// Usage:
+//   import std.net.Socket;
+//   let ws = Socket("wss://echo.example.com");
+//   ws.onMessage((msg) => console.log(msg))
+//     .onOpen(() => ws.send("hello"))
+//     .connect();
+
+public class Socket {
+    private String _url;
+    private Int _id;
+    private Bool _connected;
+    private (String) => Void _onMessage;
+    private () => Void _onOpen;
+    private () => Void _onClose;
+    private (String) => Void _onError;
+    private Bool _hasOnMessage;
+    private Bool _hasOnOpen;
+    private Bool _hasOnClose;
+    private Bool _hasOnError;
+
+    constructor(url: String) {
+        this._url = url;
+        this._id = 0;
+        this._connected = false;
+        this._hasOnMessage = false;
+        this._hasOnOpen = false;
+        this._hasOnClose = false;
+        this._hasOnError = false;
+    }
+
+    // Register a message handler. fn receives the message as a String.
+    // Returns this for chaining.
+    onMessage(fn: (String) => Void) => Socket {
+        this._onMessage = fn;
+        this._hasOnMessage = true;
+        return this;
+    }
+
+    // Register an open handler called when the connection is established.
+    // Returns this for chaining.
+    onOpen(fn: () => Void) => Socket {
+        this._onOpen = fn;
+        this._hasOnOpen = true;
+        return this;
+    }
+
+    // Register a close handler called when the connection is closed.
+    // Returns this for chaining.
+    onClose(fn: () => Void) => Socket {
+        this._onClose = fn;
+        this._hasOnClose = true;
+        return this;
+    }
+
+    // Register an error handler. fn receives the error message.
+    // Returns this for chaining.
+    onError(fn: (String) => Void) => Socket {
+        this._onError = fn;
+        this._hasOnError = true;
+        return this;
+    }
+
+    // Open the WebSocket connection and attach all registered handlers.
+    connect() => Void {
+        this._id = _socketCreate(this._url);
+        if (this._hasOnMessage) { _socketOnMessage(this._id, this._onMessage); }
+        if (this._hasOnOpen)    { _socketOnOpen(this._id, this._onOpen); }
+        if (this._hasOnClose)   { _socketOnClose(this._id, this._onClose); }
+        if (this._hasOnError)   { _socketOnError(this._id, this._onError); }
+        this._connected = true;
+        return;
+    }
+
+    // Send a text message. Only call when isConnected() is true.
+    send(message: String) => Void {
+        _socketSend(this._id, message);
+        return;
+    }
+
+    // Close the WebSocket connection.
+    close() => Void {
+        _socketClose(this._id);
+        this._connected = false;
+        return;
+    }
+
+    // True after connect() has been called and before close().
+    isConnected() => Bool { return this._connected; }
+
+    // Current WebSocket readyState (0=CONNECTING,1=OPEN,2=CLOSING,3=CLOSED).
+    readyState() => Int { return _socketReadyState(this._id); }
+
+    // The URL this socket is (or will be) connected to.
+    url() => String { return this._url; }
+}

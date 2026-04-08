@@ -17,7 +17,7 @@
 /// let d = Span::dummy();
 /// assert!(d.is_dummy());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Span {
     /// 1-based line number (0 means "no position information").
     pub line: u32,

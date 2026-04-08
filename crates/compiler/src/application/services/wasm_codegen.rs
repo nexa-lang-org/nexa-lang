@@ -728,6 +728,7 @@ mod tests {
         IrModule {
             name: "Counter".into(),
             server: Some(IrServer { port: 3000 }),
+            enums: vec![],
             classes: vec![IrClass {
                 name: "Counter".into(),
                 kind: IrClassKind::Class,
@@ -785,6 +786,7 @@ mod tests {
         IrModule {
             name: "App".into(),
             server: Some(IrServer { port: 3000 }),
+            enums: vec![],
             classes: vec![IrClass {
                 name: "HomePage".into(),
                 kind: IrClassKind::Window,
@@ -904,6 +906,7 @@ mod tests {
         let ir = IrModule {
             name: "Test".into(),
             server: None,
+            enums: vec![],
             classes: vec![IrClass {
                 name: "T".into(),
                 kind: IrClassKind::Class,
@@ -1004,6 +1007,7 @@ mod tests {
         IrModule {
             name: "GcV2Test".into(),
             server: None,
+            enums: vec![],
             classes: vec![IrClass {
                 name: "Node".into(),
                 kind: IrClassKind::Class,

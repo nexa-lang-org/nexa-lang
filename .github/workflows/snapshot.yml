@@ -28,6 +28,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   IMAGE_NAME: nexalang/nexa
+  # I04: pinned Rust toolchain — update deliberately when upgrading.
+  RUST_VERSION: "1.84.1"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CI — runs on every trigger (PRs + main push)
@@ -38,8 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -48,8 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           components: clippy
       - uses: actions/cache@v4
         with:
@@ -66,7 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: actions/cache@v4
         with:
           path: |
@@ -83,7 +89,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: actions/cache@v4
         with:
           path: |
@@ -102,14 +110,15 @@ jobs:
         run: cargo test -p nexa-compiler validate_wasm_binary
 
   coverage:
-    name: Coverage
+    name: Coverage (≥ 75 %)
     runs-on: ubuntu-latest
-    # Runs in parallel with the other CI jobs; does NOT block the pipeline.
-    # A coverage drop surfaces as a warning in the PR check, not a failure.
-    continue-on-error: true
+    # I01: coverage is now a blocking gate — pipeline fails if total < 75 %.
+    # Raise the threshold progressively as the test suite grows.
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: actions/cache@v4
         with:
           path: |
@@ -120,13 +129,14 @@ jobs:
           restore-keys: ${{ runner.os }}-coverage-
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
-      - name: Run coverage
+      - name: Run coverage (fail below 75 %)
         run: |
           cargo tarpaulin \
             --all \
             --timeout 120 \
             --out Xml \
-            --output-dir coverage/
+            --output-dir coverage/ \
+            --fail-under 75
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
@@ -141,11 +151,65 @@ jobs:
           fail_ci_if_error: false
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Registry smoke test — I02: validate DB connectivity + /health endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+  registry-smoke:
+    name: Registry smoke test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexa
+          POSTGRES_PASSWORD: nexa
+          POSTGRES_DB: nexa_registry
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexa"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-smoke-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-smoke-
+      - name: Build registry binary
+        run: cargo build --locked --bin nexa-registry
+      - name: Start registry and probe /health
+        env:
+          DATABASE_URL: postgres://nexa:nexa@localhost:5432/nexa_registry
+          JWT_SECRET: ci-smoke-test-secret-32chars-ok!!
+          PORT: "4000"
+        run: |
+          ./target/debug/nexa-registry &
+          REGISTRY_PID=$!
+          # Wait up to 15 s for the server to be ready
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:4000/health > /dev/null; then
+              echo "Registry healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:4000/health | grep '"status":"ok"'
+          kill "$REGISTRY_PID"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Docker snapshot — main push + workflow_dispatch only
 # ─────────────────────────────────────────────────────────────────────────────
   docker:
     name: Docker · snapshot
-    needs: [fmt, clippy, test, wasm-validate]
+    needs: [fmt, clippy, test, wasm-validate, coverage, registry-smoke]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
@@ -202,7 +266,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   build:
     name: Build · ${{ matrix.asset }}
-    needs: [fmt, clippy, test, wasm-validate]
+    needs: [fmt, clippy, test, wasm-validate, coverage, registry-smoke]
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
 
@@ -229,8 +293,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
 
       - name: Install musl tools (Linux)

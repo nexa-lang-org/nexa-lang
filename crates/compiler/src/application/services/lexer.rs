@@ -24,6 +24,11 @@ pub enum Token {
     // ── Async ──────────────────────────────────────────────────────────────
     Async,
     Await,
+    // ── ADT / pattern matching ─────────────────────────────────────────────
+    Enum,
+    Match,
+    // ── Test blocks ────────────────────────────────────────────────────────
+    Test,
     // ── Control flow ───────────────────────────────────────────────────────
     If,
     Else,
@@ -233,6 +238,9 @@ impl Lexer {
             "continue" => Token::Continue,
             "async" => Token::Async,
             "await" => Token::Await,
+            "enum" => Token::Enum,
+            "match" => Token::Match,
+            "test" => Token::Test,
             "let" => Token::Let,
             "in" => Token::In,
             "Int" => Token::TInt,

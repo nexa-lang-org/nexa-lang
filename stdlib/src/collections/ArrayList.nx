@@ -1,0 +1,77 @@
+package std.collections;
+
+// ArrayList<T> — Resizable indexed array backed by _NexaList.
+//
+// Usage:
+//   import std.collections.ArrayList;
+//   let list = ArrayList();
+//   list.add(42);
+//   let v = list.get(0);  // => 42
+
+public class ArrayList<T> {
+    private List<T> _data;
+    private Int _size;
+
+    constructor() {
+        this._data = [];
+        this._size = 0;
+    }
+
+    // Append item to the end. O(1) amortized.
+    add(item: T) => Void {
+        this._data.push(item);
+        this._size = this._size + 1;
+        return;
+    }
+
+    // Return item at index. O(1).
+    get(index: Int) => T {
+        return this._data.get(index);
+    }
+
+    // Replace item at index. O(1).
+    set(index: Int, item: T) => Void {
+        this._data.set(index, item);
+        return;
+    }
+
+    // Remove and return the last item. O(1).
+    removeLast() => T {
+        this._size = this._size - 1;
+        return this._data.pop();
+    }
+
+    // Remove item at index, shifting subsequent items. O(n).
+    removeAt(index: Int) => Void {
+        this._data.removeAt(index);
+        this._size = this._size - 1;
+        return;
+    }
+
+    // Return the index of the first occurrence of item, or -1.
+    indexOf(item: T) => Int {
+        return this._data.indexOf(item);
+    }
+
+    // True if the list contains item.
+    contains(item: T) => Bool {
+        return this._data.contains(item);
+    }
+
+    // Remove all items.
+    clear() => Void {
+        this._data = [];
+        this._size = 0;
+        return;
+    }
+
+    // Number of items.
+    size() => Int {
+        return this._size;
+    }
+
+    // True when empty.
+    isEmpty() => Bool {
+        return this._size == 0;
+    }
+}

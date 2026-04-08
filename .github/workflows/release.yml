@@ -17,6 +17,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   IMAGE_NAME: nexalang/nexa
+  # I04: pinned Rust toolchain — update deliberately when upgrading.
+  RUST_VERSION: "1.84.1"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CI — same checks as the snapshot pipeline
@@ -27,8 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -37,8 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           components: clippy
       - uses: actions/cache@v4
         with:
@@ -55,7 +59,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: actions/cache@v4
         with:
           path: |
@@ -163,8 +169,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
 
       - name: Install musl tools (Linux)

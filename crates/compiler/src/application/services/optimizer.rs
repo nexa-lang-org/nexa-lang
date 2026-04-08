@@ -46,6 +46,8 @@ fn decl_name(decl: &Declaration) -> &str {
     match decl {
         Declaration::Class(c) => &c.name,
         Declaration::Interface(i) => &i.name,
+        Declaration::Enum(e) => &e.name,
+        Declaration::Test(t) => &t.name,
     }
 }
 
@@ -87,6 +89,18 @@ fn collect_decl_names(decl: &Declaration, out: &mut HashSet<String>) {
                 }
             }
         }
+        Declaration::Enum(e) => {
+            for v in &e.variants {
+                for f in &v.fields {
+                    collect_type_names(f, out);
+                }
+            }
+        }
+        Declaration::Test(t) => {
+            for s in &t.body {
+                collect_stmt_names(s, out);
+            }
+        }
     }
 }
 
@@ -108,8 +122,8 @@ fn collect_type_names(ty: &Type, out: &mut HashSet<String>) {
 
 fn collect_stmt_names(stmt: &Stmt, out: &mut HashSet<String>) {
     match stmt {
-        Stmt::Return(Some(e)) => collect_expr_names(e, out),
-        Stmt::Return(None) => {}
+        Stmt::Return { expr: Some(e), .. } => collect_expr_names(e, out),
+        Stmt::Return { expr: None, .. } => {}
         Stmt::Assign { object, value, .. } => {
             collect_expr_names(object, out);
             collect_expr_names(value, out);
@@ -149,6 +163,14 @@ fn collect_stmt_names(stmt: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::Break | Stmt::Continue => {}
         Stmt::Expr(e) => collect_expr_names(e, out),
+        Stmt::Match { expr, arms } => {
+            collect_expr_names(expr, out);
+            for arm in arms {
+                for s in &arm.body {
+                    collect_stmt_names(s, out);
+                }
+            }
+        }
     }
 }
 
@@ -248,7 +270,7 @@ fn inline_components(mut program: Program) -> Program {
 
 fn inline_stmt(stmt: Stmt, map: &HashMap<String, Vec<Stmt>>) -> Stmt {
     match stmt {
-        Stmt::Return(Some(e)) => Stmt::Return(Some(inline_expr(e, map))),
+        Stmt::Return { expr: Some(e), span } => Stmt::Return { expr: Some(inline_expr(e, map)), span },
         Stmt::Assign {
             object,
             field,
@@ -295,7 +317,7 @@ fn inline_expr(expr: Expr, map: &HashMap<String, Vec<Stmt>>) -> Expr {
             if let Some(body) = map.get(callee) {
                 // If the render body is a single return, unwrap the expression
                 if body.len() == 1 {
-                    if let Stmt::Return(Some(inner)) = &body[0] {
+                    if let Stmt::Return { expr: Some(inner), .. } = &body[0] {
                         return inner.clone();
                     }
                 }
@@ -357,7 +379,7 @@ fn flatten_tree(mut program: Program) -> Program {
 
 fn flatten_stmt(stmt: Stmt) -> Stmt {
     match stmt {
-        Stmt::Return(Some(e)) => Stmt::Return(Some(flatten_expr(e))),
+        Stmt::Return { expr: Some(e), span } => Stmt::Return { expr: Some(flatten_expr(e)), span },
         Stmt::Assign {
             object,
             field,
@@ -466,7 +488,7 @@ fn precompute_props(mut program: Program) -> Program {
 
 fn fold_stmt(stmt: Stmt) -> Stmt {
     match stmt {
-        Stmt::Return(Some(e)) => Stmt::Return(Some(fold_expr(e))),
+        Stmt::Return { expr: Some(e), span } => Stmt::Return { expr: Some(fold_expr(e)), span },
         Stmt::Assign {
             object,
             field,
