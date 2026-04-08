@@ -36,6 +36,7 @@ pub fn build(project_dir: Option<PathBuf>) {
     let mut lock_entries: Vec<(String, Vec<BuildLockEntry>)> = Vec::new();
     let mut compiled = 0usize;
     let mut skipped = 0usize;
+    let mut any_failed = false;
 
     let pb = ui::progress_bar("Compiling…", modules.len() as u64);
 
@@ -97,7 +98,7 @@ pub fn build(project_dir: Option<PathBuf>) {
             compiled += 1;
             pb.inc(1);
         } else {
-            pb.abandon();
+            any_failed = true;
         }
     }
 
@@ -105,12 +106,16 @@ pub fn build(project_dir: Option<PathBuf>) {
         lock_entries.iter().map(|(n, e)| (n.as_str(), e.clone())).collect();
     save_build_lock(proj.root(), &refs);
 
-    let summary = match (compiled, skipped) {
-        (c, 0) => format!("Build OK — {c} module(s) compiled"),
-        (0, s) => format!("Build OK — {s} module(s) up to date (nothing to compile)"),
-        (c, s) => format!("Build OK — {c} compiled, {s} up to date"),
-    };
-    ui::bar_done(&pb, summary);
+    if any_failed {
+        ui::bar_fail(&pb, "Build failed — see errors above");
+    } else {
+        let summary = match (compiled, skipped) {
+            (c, 0) => format!("Build OK — {c} module(s) compiled"),
+            (0, s) => format!("Build OK — {s} module(s) up to date (nothing to compile)"),
+            (c, s) => format!("Build OK — {c} compiled, {s} up to date"),
+        };
+        ui::bar_done(&pb, summary);
+    }
 }
 
 // ── Run / Dev server ──────────────────────────────────────────────────────────
@@ -152,9 +157,12 @@ pub async fn run(
     pb.inc(1);
 
     let dist = proj.dist_dir(&mod_name);
-    let _ = fs::create_dir_all(&dist);
-    let _ = fs::write(dist.join("index.html"), &result.html);
-    let _ = fs::write(dist.join("app.js"), &result.js);
+    if let Err(e) = fs::create_dir_all(&dist)
+        .and_then(|_| fs::write(dist.join("index.html"), &result.html))
+        .and_then(|_| fs::write(dist.join("app.js"), &result.js))
+    {
+        ui::bar_fail(&pb, format!("could not write dist: {e}"));
+    }
     pb.inc(1);
     ui::bar_done(&pb, "Compiled");
 
@@ -443,7 +451,6 @@ pub(super) fn fingerprint_module_sources(
     src_root: &Path,
     project_root: &Path,
 ) -> Vec<BuildLockEntry> {
-    use sha2::{Digest, Sha256};
     let mut entries = Vec::new();
     let Ok(walk) = fs::read_dir(src_root) else {
         return entries;
