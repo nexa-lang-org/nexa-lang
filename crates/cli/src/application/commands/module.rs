@@ -1,6 +1,7 @@
 use super::{init::to_pascal_case, init::write_file, load_project};
 use crate::application::project::{AppType, Platform};
 use crate::infrastructure::ui;
+use serde::Serialize;
 use std::{fs, path::PathBuf};
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
@@ -114,15 +115,26 @@ app {app} {{
 
     // Add module to project.json
     let proj_path = root.join("project.json");
-    if let Ok(text) = fs::read_to_string(&proj_path) {
-        if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(modules) = val.get_mut("modules").and_then(|m| m.as_array_mut()) {
-                modules.push(serde_json::Value::String(name.clone()));
+    match fs::read_to_string(&proj_path) {
+        Err(e) => ui::warn(format!("could not read project.json: {e}")),
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Err(e) => ui::warn(format!("could not parse project.json: {e}")),
+            Ok(mut val) => {
+                if let Some(modules) = val.get_mut("modules").and_then(|m| m.as_array_mut()) {
+                    modules.push(serde_json::Value::String(name.clone()));
+                } else {
+                    ui::warn("project.json has no 'modules' array — module not registered");
+                }
+                match serde_json::to_string_pretty(&val) {
+                    Err(e) => ui::warn(format!("could not serialize project.json: {e}")),
+                    Ok(updated) => {
+                        if let Err(e) = fs::write(&proj_path, updated) {
+                            ui::warn(format!("could not write project.json: {e}"));
+                        }
+                    }
+                }
             }
-            if let Ok(updated) = serde_json::to_string_pretty(&val) {
-                let _ = fs::write(&proj_path, updated);
-            }
-        }
+        },
     }
 
     ui::blank();
@@ -144,27 +156,37 @@ app {app} {{
 /// `"platforms"` is omitted when the list is empty — both for backward
 /// compatibility with projects that do not use multi-target features.
 fn build_module_json(name: &str, app_type: &AppType, platforms: &[Platform]) -> String {
-    let type_field = match app_type {
-        AppType::Web => String::new(),
-        AppType::Backend => "  \"type\": \"backend\",\n".to_string(),
-        AppType::Cli => "  \"type\": \"cli\",\n".to_string(),
-        AppType::Desktop => "  \"type\": \"desktop\",\n".to_string(),
-        AppType::Package => "  \"type\": \"package\",\n".to_string(),
+    #[derive(Serialize)]
+    struct ModuleJson<'a> {
+        name: &'a str,
+        main: &'static str,
+        #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+        app_type: Option<&'static str>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        platforms: Vec<&'static str>,
+        dependencies: serde_json::Map<String, serde_json::Value>,
+    }
+
+    let type_str = match app_type {
+        AppType::Web => None,
+        AppType::Backend => Some("backend"),
+        AppType::Cli => Some("cli"),
+        AppType::Desktop => Some("desktop"),
+        AppType::Package => Some("package"),
     };
 
-    let platforms_field = if platforms.is_empty() {
-        String::new()
-    } else {
-        let items: Vec<String> = platforms
-            .iter()
-            .map(|p| format!("\"{}\"", p.as_str()))
-            .collect();
-        format!("  \"platforms\": [{}],\n", items.join(", "))
+    let data = ModuleJson {
+        name,
+        main: "app.nx",
+        app_type: type_str,
+        platforms: platforms.iter().map(|p| p.as_str()).collect(),
+        dependencies: serde_json::Map::new(),
     };
 
-    format!(
-        "{{\n  \"name\": \"{name}\",\n  \"main\": \"app.nx\",\n{type_field}{platforms_field}  \"dependencies\": {{}}\n}}\n"
-    )
+    let mut out = serde_json::to_string_pretty(&data)
+        .expect("ModuleJson serialization is infallible");
+    out.push('\n');
+    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
