@@ -364,4 +364,18 @@ mod tests {
             "module.json should contain \"type\": \"backend\""
         );
     }
+
+    /// `nexa new my-tool --type cli` → module.json has `"type": "cli"`.
+    #[test]
+    fn init_cli_type_writes_type_field_in_module_json() {
+        let tmp = TempDir::new().unwrap();
+        create_project_files(tmp.path(), "my-tool", "Dev", "0.1.0", &AppType::Cli);
+
+        let raw = fs::read_to_string(
+            tmp.path().join("modules").join("core").join("module.json"),
+        )
+        .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(val["type"].as_str(), Some("cli"));
+    }
 }
