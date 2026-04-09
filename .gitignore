@@ -5,6 +5,8 @@
 dist/
 **/src/dist/
 **/src/.nexa/
+.nexa/nex_out/
+.nexa/compile/logs/
 
 # macOS
 .DS_Store
